@@ -1,0 +1,4 @@
+# 本地测试沙箱
+/tmp-test-home/
+*.log
+.DS_Store
