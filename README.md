@@ -57,6 +57,7 @@ ${CLAUDE_PLUGIN_ROOT}/bin/init [--repo <path>] [--yes]
 **可选（推荐）：**
 - [superpowers](https://github.com/obra/superpowers) — 解锁 L1 的 brainstorm/TDD/plans/review 完整 skill 链
 - [code-review-graph](https://github.com/nicobailon/code-review-graph) — 解锁 codegraph 判级校验（Mode A/B）
+- [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-with-docs` — 内置 `grill-me` 的可选升级：锚定 CONTEXT.md/ADR、边追问边更新文档。装了即优先用。`npx skills@latest add mattpocock/skills`
 
 ## 内置 skills
 
