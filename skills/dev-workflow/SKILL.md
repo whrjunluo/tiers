@@ -106,7 +106,7 @@ L4 微调不跑（风险≈0，白跑）。
 
 **执行步骤：**
 1. `brainstorming` skill — 澄清需求，提出 2-3 方案，用户确认，**输出设计文档**到 `docs/superpowers/specs/`
-2. **`grill-me` —— 对着设计文档追问一轮**，逐个解决决策树分支、暴露边界情况，把答案回填进设计文档，再进入 plan。装了 `grill-me` skill（来自 `mattpocock/skills`）则用；没装则我手动对文档追问一轮边界与细节。
+2. **`grill-me` skill（本插件内置）—— 对着设计文档追问一轮**，逐个解决决策树分支、暴露边界情况，把答案回填进设计文档，再进入 plan。
 3. `writing-plans` skill — 基于已被 grill 收敛的设计文档写 plan 到 `docs/superpowers/plans/`
 4. `test-driven-development` skill — 先写失败测试，再实现，测试通过后提交
 5. `requesting-code-review` skill — 请求代码审查

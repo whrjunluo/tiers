@@ -23,13 +23,6 @@ if ! ls "$HOME/.claude/plugins/cache/"*superpowers* >/dev/null 2>&1; then
   echo "  建议安装以获得完整体验。"
 fi
 
-# 3b. 检测 grill-me（mattpocock/skills）—— L0/L1 设计文档追问
-if ! find "$HOME/.claude" -type d -name grill-me >/dev/null 2>&1 || \
-   [ -z "$(find "$HOME/.claude" -type d -name grill-me 2>/dev/null)" ]; then
-  echo "ℹ 未检测到 grill-me —— L0/L1 设计文档定稿前的追问将降级为手动进行。"
-  echo "  安装：npx skills@latest add mattpocock/skills"
-fi
-
 # 4. 检测 codegraph
 if command -v code-review-graph >/dev/null 2>&1; then
   echo "✓ 检测到 code-review-graph —— codegraph 判级校验可用（Mode A）"

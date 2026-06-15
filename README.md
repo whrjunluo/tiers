@@ -56,8 +56,12 @@ ${CLAUDE_PLUGIN_ROOT}/bin/init [--repo <path>] [--yes]
 
 **可选（推荐）：**
 - [superpowers](https://github.com/obra/superpowers) — 解锁 L1 的 brainstorm/TDD/plans/review 完整 skill 链
-- [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-me` — 设计文档定稿前对其追问一轮、补边界（L0/L1）；缺失时降级为手动追问。安装：`npx skills@latest add mattpocock/skills`
 - [code-review-graph](https://github.com/nicobailon/code-review-graph) — 解锁 codegraph 判级校验（Mode A/B）
+
+## 内置 skills
+
+- `dev-workflow` — 工作流路由主 skill
+- `grill-me` — L0/L1 设计文档定稿前对其追问一轮、补边界。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
 
 ## License
 
