@@ -1,0 +1,8 @@
+task: ""
+level: ""
+phase: ""        # brainstorm | spec | plan | tdd | review | done
+artifacts:
+  spec: ""
+  plan: ""
+updated: ""
+next: ""
