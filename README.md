@@ -72,6 +72,24 @@ bash bin/init [--repo <项目路径>] [--yes]
 
 如果新会话没有自动判级，通常是 Codex 还没重新加载 skill 索引。先重启 Codex；排查时再临时点名 `dev-workflow`，看 skill 是否已安装成功。
 
+## 脚本路径
+
+所有脚本都在仓库根目录的 `scripts/` 下，不在 `skills/dev-workflow/` 下。
+
+如果仓库 clone 到 `~/gst-workspace/tiers`，正确路径是：
+
+```bash
+~/gst-workspace/tiers/scripts/workflow-state.sh check
+```
+
+不是：
+
+```bash
+~/gst-workspace/tiers/skills/dev-workflow/scripts/workflow-state.sh check
+```
+
+`workflow-state.sh check` 在新项目没有状态文件时会输出「无续行状态」并正常退出。
+
 ## 分级速查
 
 | 级别 | 典型场景 | 工作流 |

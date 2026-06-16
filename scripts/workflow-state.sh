@@ -52,7 +52,10 @@ case "${1:-}" in
       }' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
     echo "✓ ${field} = ${value}（updated=${today}）" ;;
   check)
-    [ -f "$STATE" ] || die "状态文件不存在"
+    if [ ! -f "$STATE" ]; then
+      echo "✓ 无续行状态（未初始化）：$STATE"
+      exit 0
+    fi
     ph="$(yget phase)"; [ -z "$ph" ] || in_list "$ph" "$VALID_PHASES" || die "phase 非法: $ph"
     sp="$(yget artifacts.spec)"; [ -z "$sp" ] || [ -f "$REPO/$sp" ] || echo "⚠ spec 文件不存在: $sp" >&2
     echo "✓ check 通过（phase=${ph:-空}）" ;;

@@ -7,12 +7,48 @@ description: Use when any development task appears, including new features, bug 
 
 ## 插件路径约定
 
-本文用 `<plugin-root>` 表示插件仓库根目录。执行脚本前按以下顺序解析：
+本文用 `<plugin-root>` 表示插件仓库根目录，不是 `skills/dev-workflow` 目录。
+
+本仓库结构固定为：
+
+```text
+<plugin-root>/
+  skills/dev-workflow/SKILL.md
+  scripts/workflow-state.sh
+  scripts/learnings.sh
+  scripts/codegraph-judge.sh
+```
+
+如果当前 skill 文件路径是：
+
+```text
+.../tiers/skills/dev-workflow/SKILL.md
+```
+
+那么 `<plugin-root>` 是：
+
+```text
+.../tiers
+```
+
+正确脚本路径示例：
+
+```bash
+/Users/elvis/gst-workspace/tiers/scripts/workflow-state.sh check
+```
+
+错误示例（不要这样拼）：
+
+```bash
+/Users/elvis/gst-workspace/tiers/skills/dev-workflow/scripts/workflow-state.sh check
+```
+
+执行脚本前按以下顺序解析：
 
 1. `DEV_WORKFLOW_PLUGIN_ROOT`
 2. `CODEX_PLUGIN_ROOT`
 3. `CLAUDE_PLUGIN_ROOT`
-4. 当前 `SKILL.md` 所在插件目录
+4. 若是从本文件路径推断，则从 `skills/dev-workflow/SKILL.md` 上溯两级到仓库根目录
 
 脚本自身也按同样规则自动推断，Codex 环境不要依赖 Claude 专属变量。
 
@@ -203,7 +239,7 @@ next: 下一步具体该做什么
 ```
 
 **维护约定：**
-1. **开工时**：跑 `<plugin-root>/scripts/workflow-state.sh check`，再 `get phase` / `get task` / `get next`。若 phase != done 且非空，提示续行：「检测到未完成的 {level} 任务【{task}】，停在 {phase}，下一步 {next}。继续，还是换新任务？」
+1. **开工时**：跑 `<plugin-root>/scripts/workflow-state.sh check`。如果输出「无续行状态」，直接继续判级；如果已有状态，再 `get phase` / `get task` / `get next`。若 phase != done 且非空，提示续行：「检测到未完成的 {level} 任务【{task}】，停在 {phase}，下一步 {next}。继续，还是换新任务？」
 2. **定级后**：跑 `workflow-state.sh init`（首次创建），再 `set task/level/phase`。
 3. **每过一个阶段**：`set phase/next`，有 spec/plan 则 `set artifacts.spec/artifacts.plan`。
 4. **收尾（仅 L0/L1）**：`set phase done`。脚本自动更新 `updated`。
