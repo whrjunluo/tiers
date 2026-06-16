@@ -14,7 +14,7 @@ while [ "${1:-}" ]; do
   esac
 done
 
-PLUGIN_NAME="dev-workflow-plugin"
+PLUGIN_NAME="dev-workflow"
 PLUGIN_VERSION="0.1.0"
 MARKETPLACE_NAME="local"
 CONFIG="$CODEX_HOME_DIR/config.toml"
@@ -54,8 +54,8 @@ data = {
     "interface": {"displayName": "Local"},
     "plugins": [
         {
-            "name": "dev-workflow-plugin",
-            "source": {"source": "local", "path": "./plugins/dev-workflow-plugin"},
+            "name": "dev-workflow",
+            "source": {"source": "local", "path": "./plugins/dev-workflow"},
             "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
             "category": "Developer Tools",
         }
@@ -87,9 +87,9 @@ text = ensure_block(
     "[marketplaces.local]",
     f'last_updated = "1970-01-01T00:00:00Z"\nsource_type = "local"\nsource = "{marketplace_path}"',
 )
-text = ensure_block(text, '[plugins."dev-workflow-plugin@local"]', "enabled = true")
+text = ensure_block(text, '[plugins."dev-workflow@local"]', "enabled = true")
 
-pattern = re.compile(r'(\[plugins\."dev-workflow-plugin@local"\]\n)(.*?)(?=\n\[|\Z)', re.S)
+pattern = re.compile(r'(\[plugins\."dev-workflow@local"\]\n)(.*?)(?=\n\[|\Z)', re.S)
 match = pattern.search(text)
 if match:
     body = match.group(2)
@@ -129,7 +129,7 @@ ensure_config
 
 CODEX_HOME="$CODEX_HOME_DIR" DEV_WORKFLOW_PLUGIN_ROOT="$PLUGIN_ROOT" "$PLUGIN_ROOT/scripts/learnings.sh" ready >/dev/null || true
 
-echo "✓ Installed dev-workflow-plugin for Codex"
+echo "✓ Installed dev-workflow for Codex"
 echo "✓ Plugin: $PLUGIN_ROOT"
 echo "✓ Skills: $CODEX_HOME_DIR/skills/dev-workflow, $CODEX_HOME_DIR/skills/grill-me"
 echo "✓ Config: $CONFIG"
