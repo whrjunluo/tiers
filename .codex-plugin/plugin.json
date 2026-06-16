@@ -5,8 +5,8 @@
   "author": {
     "name": "elvis"
   },
-  "homepage": "https://github.com/elvis/tiers",
-  "repository": "https://github.com/elvis/tiers",
+  "homepage": "https://github.com/whrjunluo/tiers",
+  "repository": "https://github.com/whrjunluo/tiers",
   "license": "MIT",
   "keywords": [
     "codex",
@@ -28,9 +28,9 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/elvis/tiers",
-    "privacyPolicyURL": "https://github.com/elvis/tiers",
-    "termsOfServiceURL": "https://github.com/elvis/tiers",
+    "websiteURL": "https://github.com/whrjunluo/tiers",
+    "privacyPolicyURL": "https://github.com/whrjunluo/tiers",
+    "termsOfServiceURL": "https://github.com/whrjunluo/tiers",
     "defaultPrompt": [
       "Choose the right workflow level for this change.",
       "Help me implement this feature with the dev workflow."

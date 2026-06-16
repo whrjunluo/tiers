@@ -14,7 +14,7 @@
 发布到 GitHub 后，在 Claude Code 里：
 
 ```
-/plugin marketplace add <owner>/tiers
+/plugin marketplace add whrjunluo/tiers
 /plugin install dev-workflow@tiers
 ```
 
@@ -30,7 +30,7 @@
 在新电脑上先 clone 这个仓库，然后运行安装脚本：
 
 ```bash
-git clone <your-repo-url> ~/gst-workspace/tiers
+git clone https://github.com/whrjunluo/tiers.git ~/gst-workspace/tiers
 cd ~/gst-workspace/tiers
 bash bin/install-codex --yes
 ```
