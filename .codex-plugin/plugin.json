@@ -1,0 +1,39 @@
+{
+  "name": "dev-workflow-plugin",
+  "version": "0.1.0",
+  "description": "分级开发工作流路由（L0-L4）：判级加固、跨 session 续行、跨项目自主进化、codegraph 判级集成、grill-me 设计追问。",
+  "author": {
+    "name": "elvis"
+  },
+  "homepage": "https://github.com/elvis/dev-workflow-plugin",
+  "repository": "https://github.com/elvis/dev-workflow-plugin",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "workflow",
+    "skills",
+    "tdd",
+    "code-review"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks.json",
+  "interface": {
+    "displayName": "Dev Workflow",
+    "shortDescription": "Route development work by L0-L4 risk and verification depth",
+    "longDescription": "Use Dev Workflow to classify development tasks, choose the right skill chain, preserve resumable workflow state, collect judgment corrections, and optionally calibrate risk with code-review-graph.",
+    "developerName": "elvis",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/elvis/dev-workflow-plugin",
+    "privacyPolicyURL": "https://github.com/elvis/dev-workflow-plugin",
+    "termsOfServiceURL": "https://github.com/elvis/dev-workflow-plugin",
+    "defaultPrompt": [
+      "Choose the right workflow level for this change.",
+      "Help me implement this feature with the dev workflow."
+    ]
+  }
+}

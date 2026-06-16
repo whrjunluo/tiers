@@ -7,52 +7,68 @@
 """
 import sys, json, re
 
+CORRECTION_RE = re.compile(r"(不对|不是|应该|错了|纠正|改成|其实是|太重|太轻|过度|降级|升级到)")
+LEVEL_RE = re.compile(r"[Ll][0-4]")
+JUDGMENT_RE = re.compile(r"级别\s*[=＝]")
+
+
+def prompt_mentions_level_correction(prompt):
+    return all((CORRECTION_RE.search(prompt), LEVEL_RE.search(prompt)))
+
+
+def assistant_text_from_record(record):
+    msg = record.get("message", {})
+    if msg.get("role") != "assistant":
+        return ""
+
+    content = msg.get("content", "")
+    if isinstance(content, list):
+        return " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+    return str(content)
+
+
+def transcript_has_recent_judgment(transcript_path, max_lines=12):
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception:
+        return False
+
+    for line in lines[-max_lines:]:
+        try:
+            text = assistant_text_from_record(json.loads(line))
+        except Exception:
+            continue
+        if JUDGMENT_RE.search(text):
+            return True
+    return False
+
+
+def build_reminder():
+    return (
+        "📈 [dev-workflow 进化检测] 用户本轮疑似纠正了你上一轮的判级。"
+        "处理完这条请求后，记得运行 "
+        "`<plugin-root>/scripts/learnings.sh add <category> <project> \"<note>\"` "
+        "把这次纠正记进全局 LEARNINGS.md（category 必须取自词表，note 写清「我原判 Lx → 应为 Ly，因为…」）。"
+    )
+
 def main():
     try:
         data = json.load(sys.stdin)
     except Exception:
         return
-    prompt = data.get("prompt", "") or ""
-    tpath = data.get("transcript_path", "") or ""
+    prompt = data.get("prompt", "")
+    tpath = data.get("transcript_path", "")
 
-    # 本条用户消息是否带「纠正 + 级别」信号
-    neg = re.search(r"(不对|不是|应该|错了|纠正|改成|其实是|太重|太轻|过度|降级|升级到)", prompt)
-    lvl = re.search(r"[Ll][0-4]", prompt)
-    if not (neg and lvl):
+    if not prompt_mentions_level_correction(prompt):
         return
 
     # 上一轮我是否真的输出过判级行（避免误报）
-    had_judge = False
-    try:
-        with open(tpath, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        for ln in lines[-12:]:
-            try:
-                obj = json.loads(ln)
-            except Exception:
-                continue
-            msg = obj.get("message", {}) or {}
-            if msg.get("role") != "assistant":
-                continue
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                text = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
-            else:
-                text = str(content)
-            if "级别" in text and ("=" in text or "＝" in text):
-                had_judge = True
-    except Exception:
-        return
-    if not had_judge:
+    if not transcript_has_recent_judgment(tpath):
         return
 
     # UserPromptSubmit：stdout 直接注入上下文
-    print(
-        "📈 [dev-workflow 进化检测] 用户本轮疑似纠正了你上一轮的判级。"
-        "处理完这条请求后，记得运行 "
-        "`${CLAUDE_PLUGIN_ROOT}/scripts/learnings.sh add <category> <project> \"<note>\"` "
-        "把这次纠正记进全局 LEARNINGS.md（category 必须取自词表，note 写清「我原判 Lx → 应为 Ly，因为…」）。"
-    )
+    print(build_reminder())
 
 if __name__ == "__main__":
     main()

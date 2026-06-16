@@ -2,7 +2,8 @@
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
 # 用法: workflow-state.sh [--repo R] {init|get <field>|set <field> <value>|check}
 set -euo pipefail
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 REPO="$PWD"
 if [ "${1:-}" = "--repo" ]; then REPO="$2"; shift 2; fi
@@ -49,7 +50,7 @@ case "${1:-}" in
         if($1=="updated:"){ line="updated: " today; upd_done=1 }
         print line
       }' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
-    echo "✓ $field = $value（updated=$today）" ;;
+    echo "✓ ${field} = ${value}（updated=${today}）" ;;
   check)
     [ -f "$STATE" ] || die "状态文件不存在"
     ph="$(yget phase)"; [ -z "$ph" ] || in_list "$ph" "$VALID_PHASES" || die "phase 非法: $ph"

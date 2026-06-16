@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dev-workflow 安装器：建数据区、检测引导依赖与 codegraph、确保 gitignore。
 set -euo pipefail
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}"
 source "$PLUGIN_ROOT/scripts/lib.sh"
 
 REPO="$PWD"; YES=0
@@ -17,8 +17,8 @@ grep -qxF "docs/superpowers/.workflow-state.yaml" "$GI" 2>/dev/null || \
   echo "docs/superpowers/.workflow-state.yaml" >> "$GI"
 echo "✓ 已确保 .gitignore 忽略续行状态"
 
-# 3. 检测伴侣 skill（superpowers）
-if ! ls "$HOME/.claude/plugins/cache/"*superpowers* >/dev/null 2>&1; then
+# 3. 检测伴侣 skill（superpowers）—— 对各平台插件目录布局做容错搜索
+if ! find "$HOME/.claude" "${CODEX_HOME:-$HOME/.codex}" -maxdepth 5 -type d -name '*superpowers*' 2>/dev/null | grep -q .; then
   echo "ℹ 未检测到 superpowers —— L1 的 brainstorm/TDD/plans 等步骤将降级为内联描述。"
   echo "  建议安装以获得完整体验。"
 fi
@@ -27,7 +27,11 @@ fi
 if command -v code-review-graph >/dev/null 2>&1; then
   echo "✓ 检测到 code-review-graph —— codegraph 判级校验可用（Mode A）"
   if [ "$YES" = 1 ] || { read -rp "为本 repo 注册 codegraph MCP（解锁事前依赖查询 Mode B）? [y/N] " a; [ "$a" = y ]; }; then
-    (cd "$REPO" && code-review-graph install --platform claude-code --no-hooks --no-skills --no-instructions -y) || true
+    # 平台按实际运行环境探测，别默认 codex —— 否则 Claude 用户的 MCP 会装错地方
+    if [ -n "${DEV_WORKFLOW_CODEGRAPH_PLATFORM:-}" ]; then platform="$DEV_WORKFLOW_CODEGRAPH_PLATFORM"
+    elif [ -n "${CODEX_PLUGIN_ROOT:-}" ]; then platform="codex"
+    else platform="claude-code"; fi
+    (cd "$REPO" && code-review-graph install --platform "$platform" --no-hooks --no-skills --no-instructions -y) || true
   fi
 else
   echo "ℹ 未检测到 code-review-graph —— 判级将纯人工进行（功能完整）。装它可解锁判级校验。"
