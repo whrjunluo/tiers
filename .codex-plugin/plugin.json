@@ -1,12 +1,12 @@
 {
-  "name": "dev-workflow-plugin",
+  "name": "dev-workflow",
   "version": "0.1.0",
   "description": "分级开发工作流路由（L0-L4）：判级加固、跨 session 续行、跨项目自主进化、codegraph 判级集成、grill-me 设计追问。",
   "author": {
     "name": "elvis"
   },
-  "homepage": "https://github.com/elvis/dev-workflow-plugin",
-  "repository": "https://github.com/elvis/dev-workflow-plugin",
+  "homepage": "https://github.com/elvis/tiers",
+  "repository": "https://github.com/elvis/tiers",
   "license": "MIT",
   "keywords": [
     "codex",
@@ -28,9 +28,9 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/elvis/dev-workflow-plugin",
-    "privacyPolicyURL": "https://github.com/elvis/dev-workflow-plugin",
-    "termsOfServiceURL": "https://github.com/elvis/dev-workflow-plugin",
+    "websiteURL": "https://github.com/elvis/tiers",
+    "privacyPolicyURL": "https://github.com/elvis/tiers",
+    "termsOfServiceURL": "https://github.com/elvis/tiers",
     "defaultPrompt": [
       "Choose the right workflow level for this change.",
       "Help me implement this feature with the dev workflow."
