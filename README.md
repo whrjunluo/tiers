@@ -9,7 +9,23 @@
 - **跨项目自主进化**：纠正积累 → 阈值提案 → 人工放行固化规则
 - **codegraph 判级集成**：三层优雅降级
 
-## 新电脑安装 Codex
+## 安装（Claude Code）
+
+发布到 GitHub 后，在 Claude Code 里：
+
+```
+/plugin marketplace add <owner>/tiers
+/plugin install dev-workflow@tiers
+```
+
+- 选 **user scope**，让所有项目、终端 TUI 与桌面/网页客户端都生效。
+- 装完**重启 Claude Code**（不只是新开对话），让 skill 与 UserPromptSubmit hook 加载。
+- 之后在任意项目根目录跑一次 `${CLAUDE_PLUGIN_ROOT}/bin/init` 做项目级初始化（见下方「每个项目初始化」）。
+
+> 本地开发安装（不经 GitHub）：`/plugin marketplace add ~/gst-workspace/tiers` 再 `/plugin install dev-workflow@tiers`。
+> ⚠️ 本地目录源**只有终端 TUI 能加载**；桌面/网页客户端读不到本地目录，必须用上面的 GitHub 方式。
+
+## 安装（Codex）
 
 在新电脑上先 clone 这个仓库，然后运行安装脚本：
 
