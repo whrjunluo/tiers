@@ -1,6 +1,6 @@
 ---
 name: dev-workflow
-description: Use when the user asks for new development, a feature, bug fix, refactor, UI change, or workflow-level choice. Routes the task through L0 gstack, L1 SDD, L2 lightweight spec, L3 debugging, or L4 direct edit and executes the matching skill chain.
+description: Use when any development task appears, including new features, bug fixes, refactors, UI changes, implementation requests, code edits, or workflow-level choices. Automatically routes the task through L0 gstack, L1 SDD, L2 lightweight spec, L3 debugging, or L4 direct edit and executes the matching skill chain.
 ---
 
 # 开发工作流路由与执行指南
