@@ -34,13 +34,13 @@ description: Use when any development task appears, including new features, bug 
 正确脚本路径示例：
 
 ```bash
-/Users/elvis/gst-workspace/tiers/scripts/workflow-state.sh check
+<plugin-root>/scripts/workflow-state.sh check
 ```
 
 错误示例（不要这样拼）：
 
 ```bash
-/Users/elvis/gst-workspace/tiers/skills/dev-workflow/scripts/workflow-state.sh check
+<plugin-root>/skills/dev-workflow/scripts/workflow-state.sh check
 ```
 
 执行脚本前按以下顺序解析：
