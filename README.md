@@ -134,11 +134,11 @@ bash bin/init [--repo <项目路径>] [--yes]
 
 | 可选依赖 | 解锁什么 | 安装命令 |
 |---|---|---|
-| [superpowers](https://github.com/obra/superpowers) | L1 的 brainstorm / TDD / plans / review 完整 skill 链 | **Claude Code**：`/plugin install superpowers@claude-plugins-official`（完整，含 hook）<br>**Codex / 其他**：`npx skills@latest add obra/superpowers`（skill 文件；Codex 本就无该 hook，不算损失） |
+| [superpowers](https://github.com/obra/superpowers) | L1 的 brainstorm / TDD / plans / review 完整 skill 链 | **Claude Code**：`/plugin install superpowers@claude-plugins-official`<br>**Codex / 其他**：`npx skills@latest add obra/superpowers` |
 | [code-review-graph](https://github.com/nicobailon/code-review-graph) | codegraph 判级校验（上表 Mode A/B） | `uv tool install code-review-graph`（或 `pipx install` / `pip install`） |
 | [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-with-docs` | 内置 `grill-me` 的升级（锚定 CONTEXT.md / ADR），装了即优先用 | `npx skills@latest add mattpocock/skills` |
 
-> **为什么 superpowers 在 Claude 上不能脚本一键装**：它是 `/plugin` 斜杠命令（shell 调不了），且带一个 SessionStart hook，`npx skills add` 只搬 skill 文件会丢 hook。Codex 没有这个 Claude 专属 hook，所以那边 `npx skills add` 就是完整装法——这也是 [Comet](https://github.com/rpamis/comet) 把 Superpowers skill 文件铺进各平台 `skills/` 目录的同款思路。
+> superpowers 在 Claude Code 须通过官方插件安装（命令行无法自动完成）；其他平台安装其 skill 文件即可。
 
 ## 内置 skills
 
