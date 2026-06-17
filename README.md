@@ -38,6 +38,15 @@ bash bin/install-codex
 
 `install-codex` 是**机器级一次性安装**，会：把仓库注册为 Codex 本地 marketplace、在 `config.toml` 启用插件、把 `dev-workflow` 与 `grill-me` 两个 skill 链接进 `$CODEX_HOME/skills/`（默认 `~/.codex`，旧同名 skill 先备份）、初始化全局数据区。装完**重启 Codex 或新开会话**。
 
+加 `--install-deps` 会**一并把伴侣 skill 装好**（Codex 走 skill 文件，非 `/plugin`）：
+
+```bash
+bash bin/install-codex --install-deps
+# 自动 npx skills add：obra/superpowers（L1 完整链）、mattpocock/skills（grill-with-docs）
+```
+
+不加则只打印这两条命令，让你手动决定。
+
 ---
 
 ## 初始化项目（可选）

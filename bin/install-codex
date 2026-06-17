@@ -5,11 +5,13 @@ set -euo pipefail
 PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 YES=0
+INSTALL_DEPS=0
 
 while [ "${1:-}" ]; do
   case "$1" in
     --codex-home) CODEX_HOME_DIR="$2"; shift 2 ;;
     --yes|-y) YES=1; shift ;;
+    --install-deps) INSTALL_DEPS=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -128,6 +130,18 @@ install_links
 ensure_config
 
 CODEX_HOME="$CODEX_HOME_DIR" DEV_WORKFLOW_PLUGIN_ROOT="$PLUGIN_ROOT" "$PLUGIN_ROOT/scripts/learnings.sh" ready >/dev/null || true
+
+# 伴侣 skill（Codex 走 skill 文件，非 /plugin）。默认只提示；--install-deps 才自动装。
+have_skill_dir() { find "$CODEX_HOME_DIR/skills" "$HOME/.claude" -maxdepth 4 -type d -name "$1" 2>/dev/null | grep -q .; }
+add_companion() { # $1=repo  $2=display
+  echo "ℹ 未检测到 $2 —— Codex 安装： npx skills@latest add $1"
+  if [ "$INSTALL_DEPS" = 1 ]; then
+    echo "→ 安装 $2 …"
+    CODEX_HOME="$CODEX_HOME_DIR" npx -y skills@latest add "$1" || echo "  ⚠ 自动安装失败，请手动跑上面的命令。"
+  fi
+}
+have_skill_dir '*superpowers*' || add_companion obra/superpowers "superpowers（L1 完整 skill 链）"
+have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-docs（内置 grill-me 的可选升级）"
 
 echo "✓ Installed dev-workflow for Codex"
 echo "✓ Plugin: $PLUGIN_ROOT"
