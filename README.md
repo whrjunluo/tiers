@@ -1,5 +1,7 @@
 # tiers
 
+[![CI](https://github.com/whrjunluo/tiers/actions/workflows/ci.yml/badge.svg)](https://github.com/whrjunluo/tiers/actions/workflows/ci.yml)
+
 > 按风险与验证深度给开发任务分级（L0–L4）并路由到对应工作流的 Claude Code / Codex 插件。Claude Code 里通过 `/` 菜单使用；Codex 里会在开发需求中自动触发。
 
 接到一个开发需求，先判它属于哪一级（从 L0 大型改造到 L4 文案微调），再走对应的工作流——减少“小改动当大事做”的过度工程，也减少“大改动当小事做”的漏测回归。插件还能跨 session 续行、按你的纠正自我进化，并可选接入 codegraph 做客观判级。
