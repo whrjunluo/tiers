@@ -85,18 +85,11 @@ bash bin/init [--repo <项目路径>] [--yes]
 
 ## 脚本路径
 
-所有脚本都在仓库根目录的 `scripts/` 下，不在 `skills/dev-workflow/` 下。
-
-如果仓库 clone 到 `~/gst-workspace/tiers`，正确路径是：
+所有脚本在仓库根目录的 `scripts/` 下（不在 `skills/dev-workflow/` 下）。以仓库根为 `<plugin-root>`：
 
 ```bash
-~/gst-workspace/tiers/scripts/workflow-state.sh check
-```
-
-不是：
-
-```bash
-~/gst-workspace/tiers/skills/dev-workflow/scripts/workflow-state.sh check
+<plugin-root>/scripts/workflow-state.sh check     # 正确
+<plugin-root>/skills/dev-workflow/scripts/...      # 错误，此路径不存在
 ```
 
 `workflow-state.sh check` 在新项目没有状态文件时会输出「无续行状态」并正常退出。
