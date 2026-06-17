@@ -119,11 +119,13 @@ bash bin/init [--repo <项目路径>] [--yes]
 
 **必需**：bash、awk、python3、git
 
-**可选（推荐）**
+不装这些插件也**完全可用**（自动降级）；装上则解锁更完整的体验。`bin/init` 检测到缺失时也会打印对应安装命令。
 
-- [superpowers](https://github.com/obra/superpowers) — 解锁 L1 的 brainstorm / TDD / plans / review 完整 skill 链。
-- [code-review-graph](https://github.com/nicobailon/code-review-graph) — 解锁 codegraph 判级校验（上表 Mode A/B）。
-- [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-with-docs` — 内置 `grill-me` 的可选升级（锚定 CONTEXT.md / ADR、边追问边更新文档），装了即优先用：`npx skills@latest add mattpocock/skills`。
+| 可选依赖 | 解锁什么 | 安装命令 |
+|---|---|---|
+| [superpowers](https://github.com/obra/superpowers) | L1 的 brainstorm / TDD / plans / review 完整 skill 链 | Claude Code：`/plugin install superpowers@claude-plugins-official` |
+| [code-review-graph](https://github.com/nicobailon/code-review-graph) | codegraph 判级校验（上表 Mode A/B） | `uv tool install code-review-graph`（或 `pipx install code-review-graph`） |
+| [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-with-docs` | 内置 `grill-me` 的升级（锚定 CONTEXT.md / ADR），装了即优先用 | `npx skills@latest add mattpocock/skills` |
 
 ## 内置 skills
 

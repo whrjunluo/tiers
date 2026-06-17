@@ -19,8 +19,14 @@ echo "✓ 已确保 .gitignore 忽略续行状态"
 
 # 3. 检测伴侣 skill（superpowers）—— 对各平台插件目录布局做容错搜索
 if ! find "$HOME/.claude" "${CODEX_HOME:-$HOME/.codex}" -maxdepth 5 -type d -name '*superpowers*' 2>/dev/null | grep -q .; then
-  echo "ℹ 未检测到 superpowers —— L1 的 brainstorm/TDD/plans 等步骤将降级为内联描述。"
-  echo "  建议安装以获得完整体验。"
+  echo "ℹ 未检测到 superpowers —— L1 的 brainstorm/TDD/plans/review 将降级为内联描述。"
+  echo "  安装（Claude Code，在 / 菜单里执行）：/plugin install superpowers@claude-plugins-official"
+fi
+
+# 3b. 检测可选追问升级 grill-with-docs（内置 grill-me 是基线，无需安装）
+if ! find "$HOME/.claude" "${CODEX_HOME:-$HOME/.codex}" -maxdepth 6 -type d -name 'grill-with-docs' 2>/dev/null | grep -q .; then
+  echo "ℹ（可选）grill-with-docs 是内置 grill-me 的升级（锚定 CONTEXT.md/ADR）；不装也能用内置版。"
+  echo "  安装：npx skills@latest add mattpocock/skills"
 fi
 
 # 4. 检测 codegraph
@@ -34,6 +40,7 @@ if command -v code-review-graph >/dev/null 2>&1; then
     (cd "$REPO" && code-review-graph install --platform "$platform" --no-hooks --no-skills --no-instructions -y) || true
   fi
 else
-  echo "ℹ 未检测到 code-review-graph —— 判级将纯人工进行（功能完整）。装它可解锁判级校验。"
+  echo "ℹ 未检测到 code-review-graph —— 判级纯人工进行（功能完整）。装它可解锁判级校验："
+  echo "  uv tool install code-review-graph   （或 pipx install code-review-graph）"
 fi
 echo "✓ dev-workflow 安装完成"
