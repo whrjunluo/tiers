@@ -13,6 +13,7 @@
 判级/图风险背离   codegraph 风险分与我判级明显不符
 流程/续行体感     .workflow-state.yaml 维护相关
 流程/tie-breaker  两级拿不准时的默认走向
+流程/阶段跳关     跳过 SDD/TDD 必经关卡（如 brainstorm 后未过理解度关卡就直接 spec/plan）
 ```
 
 ## 记录格式
@@ -26,4 +27,9 @@
 ```
 
 ## 进化记录（从这里开始追加）
-<!-- 暂无记录 -->
+
+- date: 2026-06-17
+  category: 流程/阶段跳关
+  project: tiers
+  note: 某 L1 新项目 brainstorming 后直接冲去写 spec、跳过 grill（被 brainstorming 终态指令牵引）。已固化：L1 加「理解度关卡」HARD-GATE，关卡必经、grill 按需触发、跳过需用户点头；状态机补 grill 阶段。
+  status: folded

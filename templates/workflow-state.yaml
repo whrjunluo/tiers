@@ -1,6 +1,6 @@
 task: ""
 level: ""
-phase: ""        # brainstorm | spec | plan | tdd | review | done
+phase: ""        # brainstorm | grill | spec | plan | tdd | review | done
 artifacts:
   spec: ""
   plan: ""

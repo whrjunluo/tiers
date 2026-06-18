@@ -101,6 +101,19 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 
 ---
 
+## 理解度关卡（各级通用）
+
+动手改代码 / 写测试前，先过一道与本级匹配的理解度自检。共同退出标准：**能否在基本不返工的前提下进入下一步**。拿不准默认走更严的处理（同 tie-breaker）；过不了关卡不是只有"往深挖"一条路——也可能是**判级错了，回去重判**。
+
+| 级别 | 动手前要"懂"的对象 | 没懂时 |
+|---|---|---|
+| L1 | 需求 / 设计（决策树分支、边界） | 进 `grill-me`；想跳过需用户点头（详见 L1 HARD-GATE） |
+| L2 | 改动的影响面 / 回归边界 / 能否写出覆盖测试 | 跑 `codegraph-judge assess` 看 affected flow / test gap，或直接读消费方；**影响面超预期（跨模块/结构性）→ 回去重判级（可能 L1/L0）** |
+| L3 | bug 的**真正根因**（不是症状冒出点） | 留在 `systematic-debugging`，别急着改；**"修复"其实是在加新行为 → 重判级（可能 L2）** |
+| L4 | （风险≈0，免） | — |
+
+---
+
 ## codegraph 辅助判级（可选，三层降级）
 
 L2 及以上、或判级拿不准时，跑 codegraph 守卫获取客观信号：
@@ -151,14 +164,22 @@ L4 微调不跑（风险≈0，白跑）。
 
 **触发条件：** 新增模块、新增完整用户流程、跨多文件的全新设计。
 
+> ⛔ **HARD-GATE（L1 强制时序，优先级高于被插入 skill 自身的终态指令）**
+> `brainstorming` skill 的终态指令是「下一步 invoking writing-plans，不要调用其他 skill」——**这条对 L1 不成立，必须无视**。L1 在 brainstorming 之后、写/定稿 spec 之前，**必须先通过「理解度关卡」**，禁止从 brainstorm 直接跳到 spec/plan。
+> **关卡判定**：摆出决策树各分支已落到的结论、识别到的边界情况、仍未问清的开口，自评对需求的理解度（能否写出基本不返工的 spec）。
+> - **理解不足，或拿不准** → 进 `grill-me` 追问，收敛到理解足够才退出。**未通过关卡禁止写 spec / 调 `writing-plans` / 建 specs 目录。**
+> - **自评已足够**（决策树全分支有结论、边界已探、无开口）→ 仍须**显式向用户提议「理解已足够，建议跳过深度 grill 直接写 spec」并取得用户点头**，方可跳过 grill。未经检验的信心不算通过；自己拍板跳过 = 流程违规。
+> 自检红旗：当你发现自己"准备写 spec / 准备调 writing-plans / 准备建 specs 目录"，但**本任务还没过理解度关卡**——立即停下，回到关卡。
+
 **执行步骤：**
-1. `brainstorming` skill — 澄清需求，提出 2-3 方案，用户确认，**输出设计文档**到 `docs/superpowers/specs/`
-2. **`grill-me` skill（本插件内置）—— 对着设计文档追问一轮**，逐个解决决策树分支、暴露边界情况，把答案回填进设计文档，再进入 plan。
+1. `brainstorming` skill — 澄清需求，提出 2-3 方案，用户确认，起草设计文档到 `docs/superpowers/specs/`
+2. **理解度关卡（必经）** — 按上方 HARD-GATE 判定：理解不足/拿不准 → 进第 3 步 grill；自评足够 → 向用户提议跳过、**取得点头后**直接进第 4 步。
+3. **`grill-me` skill（理解度不足时触发，本插件内置）** — 对着设计文档追问，逐个解决决策树分支、暴露边界情况，把答案回填进文档，理解收敛达标才退出。
    > 内置 `grill-me` 是零依赖基线。若用户自行装了更强的追问 skill（如 `mattpocock/skills` 的 `grill-with-docs`，锚定 CONTEXT.md/ADR、边问边更新文档），则优先用它。
-3. `writing-plans` skill — 基于已被 grill 收敛的设计文档写 plan 到 `docs/superpowers/plans/`
-4. `test-driven-development` skill — 先写失败测试，再实现，测试通过后提交
-5. `requesting-code-review` skill — 请求代码审查
-6. `verification-before-completion` skill — 验证功能符合 spec 后关闭任务
+4. `writing-plans` skill — 基于已收敛的设计文档写 plan 到 `docs/superpowers/plans/`
+5. `test-driven-development` skill — 先写失败测试，再实现，测试通过后提交
+6. `requesting-code-review` skill — 请求代码审查
+7. `verification-before-completion` skill — 验证功能符合 spec 后关闭任务
 
 > L0 的范围审视/架构验证阶段同样可以用 `grill-me` 追问设计；L2 只有轻量 spec，一般不必；L3/L4 无设计文档，跳过。
 
@@ -170,9 +191,10 @@ L4 微调不跑（风险≈0，白跑）。
 
 **执行步骤：**
 1. 写一段简短的需求说明（不需要完整 brainstorming，3-5 句话描述目标和边界）
-2. `test-driven-development` skill — 先写覆盖改动点的失败测试
-3. 实现，让测试通过
-4. （可选）`requesting-code-review` skill — 影响面大时使用
+2. **理解度关卡（轻量，见上）** — 一句话自检：谁在消费这块 / 回归边界在哪 / 能写出覆盖测试吗？拿不准 → `codegraph-judge assess` 或读消费方；影响面超预期 → 回去重判级。
+3. `test-driven-development` skill — 先写覆盖改动点的失败测试
+4. 实现，让测试通过
+5. （可选）`requesting-code-review` skill — 影响面大时使用
 
 ---
 
@@ -182,9 +204,10 @@ L4 微调不跑（风险≈0，白跑）。
 
 **执行步骤：**
 1. `systematic-debugging` skill — 系统性定位根因，不要凭感觉猜
-2. 写一个能复现 bug 的失败测试（先红）
-3. 修复，让测试变绿
-4. 确认没有引入新回归后提交
+2. **根因关卡（轻量，见上）** — 写修复前自检：我定位到真正根因了，还是在改症状冒出点？答不上 → 留在 systematic-debugging 别动手；若"修复"其实是加新行为 → 回去重判级（可能 L2）。
+3. 写一个能复现 bug 的失败测试（先红）
+4. 修复，让测试变绿
+5. 确认没有引入新回归后提交
 
 ---
 
@@ -230,7 +253,7 @@ L4 微调不跑（风险≈0，白跑）。
 ```yaml
 task: 一句话描述当前需求
 level: L1
-phase: spec          # brainstorm | spec | plan | tdd | review | done
+phase: spec          # brainstorm | grill | spec | plan | tdd | review | done
 artifacts:
   spec: docs/superpowers/specs/YYYY-MM-DD-xxx-design.md
   plan: ""
@@ -241,6 +264,7 @@ next: 下一步具体该做什么
 **维护约定：**
 1. **开工时**：跑 `<plugin-root>/scripts/workflow-state.sh check`。如果输出「无续行状态」，直接继续判级；如果已有状态，再 `get phase` / `get task` / `get next`。若 phase != done 且非空，提示续行：「检测到未完成的 {level} 任务【{task}】，停在 {phase}，下一步 {next}。继续，还是换新任务？」
 2. **定级后**：跑 `workflow-state.sh init`（首次创建），再 `set task/level/phase`。
+   > L1 阶段流转：`brainstorm` →（理解度关卡）→ 理解不足则 `set phase grill`、收敛后再 `set phase spec`；自评足够且用户点头可直接 `set phase spec`。禁止 brainstorm 不经关卡判定直接跳 spec。
 3. **每过一个阶段**：`set phase/next`，有 spec/plan 则 `set artifacts.spec/artifacts.plan`。
 4. **收尾（仅 L0/L1）**：`set phase done`。脚本自动更新 `updated`。
 

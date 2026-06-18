@@ -9,7 +9,7 @@ REPO="$PWD"
 if [ "${1:-}" = "--repo" ]; then REPO="$2"; shift 2; fi
 STATE="$REPO/docs/superpowers/.workflow-state.yaml"
 
-VALID_PHASES="brainstorm spec plan tdd review done"
+VALID_PHASES="brainstorm grill spec plan tdd review done"
 VALID_FIELDS="task level phase updated next artifacts.spec artifacts.plan"
 
 die(){ echo "✗ $1" >&2; exit 1; }
@@ -18,7 +18,7 @@ in_list(){ printf '%s\n' $2 | grep -qxF "$1"; }
 yget(){ # top-level or artifacts.* value extraction
   local k="$1"
   case "$k" in
-    artifacts.*) awk -v sub="${k#artifacts.}" '/^artifacts:/{f=1;next} f&&$0!~/^[[:space:]]/{f=0} f&&$1==sub":"{sub(/^[[:space:]]*[^:]+:[[:space:]]*/,"");print;exit}' "$STATE" ;;
+    artifacts.*) awk -v akey="${k#artifacts.}" '/^artifacts:/{f=1;next} f&&$0!~/^[[:space:]]/{f=0} f&&$1==akey":"{sub(/^[[:space:]]*[^:]+:[[:space:]]*/,"");print;exit}' "$STATE" ;;
     *) awk -v k="$k" '$1==k":"{sub(/^[^:]+:[[:space:]]*/,"");print;exit}' "$STATE" ;;
   esac
 }
