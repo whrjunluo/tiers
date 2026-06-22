@@ -45,6 +45,14 @@ export CURSOR_PWD="$SBOX/cursor-pwd"
 export GROK_ARGS="$SBOX/grok-args"
 export GROK_PWD="$SBOX/grok-pwd"
 
+git -C "$SBOX/repo" init -q
+git -C "$SBOX/repo" config user.email test@example.com
+git -C "$SBOX/repo" config user.name Test
+printf 'one\n' > "$SBOX/repo/file.txt"
+git -C "$SBOX/repo" add file.txt
+git -C "$SBOX/repo" commit -q -m initial
+printf 'one\ntwo\n' > "$SBOX/repo/file.txt"
+
 out="$(printf 'review this change\n' | PATH="$SBOX/bin:$PATH" "$RUNNER" --repo "$SBOX/repo" --model gemini-test)"
 [ "$out" = "agy response" ] || fail "agy stdout was not forwarded"
 [ "$(cat "$AGY_PWD")" = "$SBOX/repo" ] || fail "runner did not use requested repo"
@@ -56,6 +64,14 @@ review this change
 gemini-test
 EOF
 cmp -s "$SBOX/expected-args" "$AGY_ARGS" || fail "agy arguments were incorrect"
+
+out="$(printf 'review git context\n' | PATH="$SBOX/bin:$PATH" "$RUNNER" --context git --repo "$SBOX/repo")"
+[ "$out" = "agy response" ] || fail "git context agy stdout was not forwarded"
+grep -q '## Repository Context' "$AGY_ARGS" || fail "git context header missing"
+grep -q '### git status --short --branch' "$AGY_ARGS" || fail "git status context missing"
+grep -q '### git diff --stat' "$AGY_ARGS" || fail "git diff stat context missing"
+grep -q '### git diff' "$AGY_ARGS" || fail "git diff context missing"
+grep -q 'review git context' "$AGY_ARGS" || fail "user prompt missing from contextual prompt"
 
 out="$(printf 'review with cursor\n' | PATH="$SBOX/bin:$PATH" "$RUNNER" --agent cursor --repo "$SBOX/repo" --model gpt-test)"
 [ "$out" = "cursor response" ] || fail "cursor stdout was not forwarded"

@@ -19,13 +19,15 @@ If the user names one of these agents, use that specific agent. If the user only
 
 ## Run
 
-Resolve `<plugin-root>` using the same plugin-root rules as `dev-workflow`, then pass the prompt on stdin:
+Resolve `<plugin-root>` using the same plugin-root rules as `dev-workflow`, then pass the prompt on stdin. For code review, challenge, or implementation critique, share repository context with `--context git`; this prepends branch, status, diff summary, changed files, and current diff to the user request.
 
 ```bash
-printf '%s\n' "$prompt" | <plugin-root>/scripts/external-agent.sh --agent antigravity --repo "$PWD"
+printf '%s\n' "$prompt" | <plugin-root>/scripts/external-agent.sh --agent antigravity --repo "$PWD" --context git
 ```
 
 Use `--agent cursor` for Cursor Agent or `--agent grok` for Grok. Add `--model <model>` only when the user selected a model for the chosen agent. Run the script with `--help` for its complete interface.
+
+Use `--context none` only for research or conceptual questions where the repository diff is irrelevant. Do not paste secrets into stdin; `--context git` reads only git metadata and the current diff.
 
 ## Guardrails
 
