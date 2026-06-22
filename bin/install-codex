@@ -25,6 +25,7 @@ die() { echo "✗ $1" >&2; exit 1; }
 
 [ -f "$PLUGIN_ROOT/.codex-plugin/plugin.json" ] || die "Missing .codex-plugin/plugin.json in $PLUGIN_ROOT"
 [ -d "$PLUGIN_ROOT/skills/dev-workflow" ] || die "Missing skills/dev-workflow in $PLUGIN_ROOT"
+[ -d "$PLUGIN_ROOT/skills/external-agent" ] || die "Missing skills/external-agent in $PLUGIN_ROOT"
 
 timestamp() { date +%Y%m%d-%H%M%S; }
 
@@ -117,6 +118,7 @@ install_links() {
 
   link_or_backup "$PLUGIN_ROOT/skills/dev-workflow" "$CODEX_HOME_DIR/skills/dev-workflow" "$backup_root"
   link_or_backup "$PLUGIN_ROOT/skills/grill-me" "$CODEX_HOME_DIR/skills/grill-me" "$backup_root"
+  link_or_backup "$PLUGIN_ROOT/skills/external-agent" "$CODEX_HOME_DIR/skills/external-agent" "$backup_root"
 }
 
 if [ "$YES" != 1 ]; then
@@ -145,6 +147,6 @@ have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-do
 
 echo "✓ Installed dev-workflow for Codex"
 echo "✓ Plugin: $PLUGIN_ROOT"
-echo "✓ Skills: $CODEX_HOME_DIR/skills/dev-workflow, $CODEX_HOME_DIR/skills/grill-me"
+echo "✓ Skills: $CODEX_HOME_DIR/skills/dev-workflow, $CODEX_HOME_DIR/skills/grill-me, $CODEX_HOME_DIR/skills/external-agent"
 echo "✓ Config: $CONFIG"
 echo "Restart Codex or open a new Codex conversation to reload the skill index."
