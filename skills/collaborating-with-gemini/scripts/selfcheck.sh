@@ -27,7 +27,7 @@ if printf '%s' "$OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); sys
   say ""; say "All checks passed. The skill is ready."
   exit 0
 else
-  say "✗ round-trip failed (gemini authed? check ~/.gemini). Bridge output:"
+  say "✗ round-trip failed (is gemini authenticated / logged in?). Bridge output:"
   printf '%s\n' "$OUT"
   exit 3
 fi
