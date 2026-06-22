@@ -1,0 +1,15 @@
+Bundled collaboration skills — provenance & license
+====================================================
+
+The following skills are bundled under this plugin's skills/ directory.
+Each ships its full MIT license text in its own LICENSE file:
+
+- skills/collaborating-with-codex   — MIT, Copyright (c) 2025 GudaStudio
+    Source: GuDaStudio/skills
+- skills/collaborating-with-gemini  — MIT, Copyright (c) 2025 GudaStudio
+    Source: GuDaStudio/skills
+- skills/collaborating-with-mimo    — MIT
+    Derived from collaborating-with-codex (same structure), adapted for the
+    MiMoCode CLI (`mimo run`). Distributed under the same MIT terms.
+
+See each skill's LICENSE file for the authoritative text.
