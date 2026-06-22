@@ -12,6 +12,7 @@
 - **跨 session 续行**：每个项目一份状态文件，脚本独占读写，换会话不丢进度。
 - **跨项目自主进化**：你纠正判级 → 积累 → 同类够阈值 → 提案把规则固化进 skill（人工放行）。
 - **codegraph 判级集成**：装了 `code-review-graph` 时用客观风险分校准级别；没装则自动降级为纯人工判级。
+- **多模型协作委派**：内置 `collaborating-with-codex / -gemini / -mimo`，可把子任务横向委派给外部编码 agent CLI 做原型 / 调试二诊 / 跨模型评审；接口对齐、`SESSION_ID` 多轮续接，委派不降级工作流。
 
 ---
 
@@ -137,6 +138,7 @@ bash bin/init [--repo <项目路径>] [--yes]
 
 - `dev-workflow` — 工作流路由主 skill。
 - `grill-me` — L0/L1 设计文档定稿前追问一轮、补边界。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
+- `collaborating-with-codex` / `collaborating-with-gemini` / `collaborating-with-mimo` — 把子任务委派给 Codex / Gemini / MiMoCode CLI；统一 JSON 输出（`success` / `SESSION_ID` / `agent_messages`），`scripts/selfcheck.sh` 一键自检。Vendored from [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT；mimo 基于 codex 改写，见 `LICENSES/collaborating-skills-MIT.txt`）。
 
 ## 平台兼容
 

@@ -221,6 +221,28 @@ L4 微调不跑（风险≈0，白跑）。
 
 ---
 
+## 可委派的协作 CLI（各级可选杠杆）
+
+把子任务横向委派给外部编码 agent CLI，用于出原型 / 调试二诊 / 跨模型代码评审。三个 skill 接口对齐，都返回 `{success, SESSION_ID, agent_messages}`，靠 `SESSION_ID` 多轮续接：
+
+| skill | 底层 CLI | 何时优先 |
+|---|---|---|
+| `collaborating-with-codex` | `codex exec` | 算法实现、补丁 diff、沙箱可控（`--sandbox`） |
+| `collaborating-with-gemini` | `gemini` | 长上下文、快速原型 |
+| `collaborating-with-mimo` | `mimo run`（MiMoCode） | 国内可用、MiMo-V2.5 系列；headless 默认带 `--dangerously-skip-permissions`（无 tty 会卡权限提示） |
+
+每个 skill 的 `scripts/selfcheck.sh` 可一键自检（CLI 在位 + 一发 round-trip）。
+
+按级别用法：
+- **L0**：实现阶段的可独立子任务可并行委派（配合 worktree），各跑各的再汇总。
+- **L1/L2**：实现前让协作 CLI 出一版原型 / diff 作参考；改完请它做跨模型代码评审——是 `requesting-code-review` 的二诊，不替代它。
+- **L3**：根因难定位时，把复现信息丢给协作 CLI 要"第二意见"，最终仍以 `systematic-debugging` 的结论为准。
+- **L4**：不必（白费 token）。
+
+**纪律**：委派不降级流程——判级、理解度关卡、TDD、人工评审仍由本工作流主导；协作 CLI 的产出是输入、不是免检的最终答案，必须过本级关卡校验。`--model` / `--agent` 非用户明确指定不要传。
+
+---
+
 ## 常见判断边界
 
 | 情况 | 正确级别 |
