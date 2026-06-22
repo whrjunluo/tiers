@@ -224,13 +224,17 @@ L4 微调不跑（风险≈0，白跑）。
 
 ## 可委派的协作 CLI（各级可选杠杆）
 
-把子任务横向委派给外部编码 agent CLI，用于出原型 / 调试二诊 / 跨模型代码评审。三个 skill 接口对齐，都返回 `{success, SESSION_ID, agent_messages}`，靠 `SESSION_ID` 多轮续接：
+把子任务横向委派给外部编码 agent CLI，用于出原型 / 调试二诊 / 跨模型代码评审。五个 skill 接口对齐，都返回 `{success, SESSION_ID, agent_messages}`，靠 `SESSION_ID` 多轮续接：
 
 | skill | 底层 CLI | 何时优先 |
 |---|---|---|
 | `collaborating-with-codex` | `codex exec` | 算法实现、补丁 diff、沙箱可控（`--sandbox`） |
 | `collaborating-with-gemini` | `gemini` | 长上下文、快速原型 |
 | `collaborating-with-mimo` | `mimo run`（MiMoCode） | 国内可用、MiMo-V2.5 系列；headless 默认带 `--dangerously-skip-permissions`（无 tty 会卡权限提示） |
+| `collaborating-with-cursor-agent` | `cursor-agent -p --output-format json` | Cursor 生态、可写实现/critique；headless 默认 `--force` |
+| `collaborating-with-grok` | `grok -p --output-format json` | Grok 推理 / 备选视角；headless 默认 `--permission-mode bypassPermissions` |
+
+> 这五个是**多轮可委派**伙伴（可写/可跑）。若只要**只读、单发的独立二次意见**，用 `external-agent` skill（`--agent cursor` / `grok` / `antigravity`）——两套并存、定位不同。
 
 每个 skill 的 `scripts/selfcheck.sh` 可一键自检（CLI 在位 + 一发 round-trip）。
 

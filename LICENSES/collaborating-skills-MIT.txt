@@ -11,5 +11,12 @@ Each ships its full MIT license text in its own LICENSE file:
 - skills/collaborating-with-mimo    — MIT
     Derived from collaborating-with-codex (same structure), adapted for the
     MiMoCode CLI (`mimo run`). Distributed under the same MIT terms.
+- skills/collaborating-with-cursor-agent — MIT
+    Original work for this repository (wraps `cursor-agent -p --output-format json`).
+    Covered by the repository LICENSE.
+- skills/collaborating-with-grok     — MIT
+    Original work for this repository (wraps `grok -p --output-format json`).
+    Covered by the repository LICENSE.
 
-See each skill's LICENSE file for the authoritative text.
+codex/gemini ship their own LICENSE file; the original skills (mimo, cursor-agent,
+grok) are covered by the repository LICENSE.

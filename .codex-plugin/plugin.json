@@ -1,7 +1,7 @@
 {
   "name": "dev-workflow",
-  "version": "0.2.0",
-  "description": "分级开发工作流路由（L0-L4）：判级加固、跨 session 续行、跨项目自主进化、codegraph 判级集成、grill-me 设计追问、多模型协作委派（codex / gemini / mimo）。",
+  "version": "0.3.0",
+  "description": "分级开发工作流路由（L0-L4）：判级加固、跨 session 续行、跨项目自主进化、codegraph 判级集成、grill-me 设计追问、多模型协作委派（codex / gemini / mimo / cursor-agent / grok）。",
   "author": {
     "name": "elvis"
   },
@@ -12,6 +12,8 @@
     "codex",
     "gemini",
     "mimo",
+    "cursor-agent",
+    "grok",
     "collaboration",
     "workflow",
     "skills",
