@@ -1,0 +1,4 @@
+interface:
+  display_name: "External Agent"
+  short_description: "Use Antigravity CLI for an independent second opinion"
+  default_prompt: "Use an external agent to independently review this task."
