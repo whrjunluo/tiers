@@ -2,6 +2,7 @@
 /tmp-test-home/
 *.log
 .DS_Store
+.worktrees/
 
 # 内部设计稿，不随插件发布
 docs/superpowers/specs/
