@@ -106,10 +106,10 @@ agy
 
 ```bash
 printf '%s\n' '独立审查当前改动，只报告有证据的问题' \
-  | <plugin-root>/scripts/external-agent.sh --agent antigravity --repo "$PWD"
+  | <plugin-root>/scripts/external-agent.sh --agent antigravity --repo "$PWD" --context git
 ```
 
-把 `--agent antigravity` 换成 `--agent cursor` 或 `--agent grok` 可调用另外两个独立 agent。runner 会为各 CLI 使用保守权限参数，不会静默回退到别的 agent。不要把密钥、`.env` 内容或无关私有文件发送给外部 Agent。
+把 `--agent antigravity` 换成 `--agent cursor` 或 `--agent grok` 可调用另外两个独立 agent。`--context git` 会把当前分支、`git status`、diff 摘要、变更文件列表和当前 diff 作为共享上下文附加到任务前面；不需要仓库上下文的研究类问题可用 `--context none`。runner 会为各 CLI 使用保守权限参数，不会静默回退到别的 agent。不要把密钥、`.env` 内容或无关私有文件发送给外部 Agent。
 
 ## 脚本路径
 
