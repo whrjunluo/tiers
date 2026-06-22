@@ -224,27 +224,27 @@ L4 微调不跑（风险≈0，白跑）。
 
 ## 可委派的协作 CLI（各级可选杠杆）
 
-把子任务横向委派给外部编码 agent CLI，用于出原型 / 调试二诊 / 跨模型代码评审。五个 skill 接口对齐，都返回 `{success, SESSION_ID, agent_messages}`，靠 `SESSION_ID` 多轮续接：
+把子任务委派给外部编码 agent CLI（搜集信息 / 实现 / 交叉审核），统一走 **`external-agent` skill** —— 一个 runner、一套路由策略。详见该 skill 的 SKILL.md，这里只给路由速记：
 
-| skill | 底层 CLI | 何时优先 |
+```bash
+python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
+  --PROMPT "bounded task" [--mode review|delegate] [--format text|json] [--SESSION_ID id] [--context git]
+```
+
+| agent | 家族 | 默认角色 |
 |---|---|---|
-| `collaborating-with-codex` | `codex exec` | 算法实现、补丁 diff、沙箱可控（`--sandbox`） |
-| `collaborating-with-gemini` | `gemini` | 长上下文、快速原型 |
-| `collaborating-with-mimo` | `mimo run`（MiMoCode） | 国内可用、MiMo-V2.5 系列；headless 默认带 `--dangerously-skip-permissions`（无 tty 会卡权限提示） |
-| `collaborating-with-cursor-agent` | `cursor-agent -p --output-format json` | Cursor 生态、可写实现/critique；headless 默认 `--force` |
-| `collaborating-with-grok` | `grok -p --output-format json` | Grok 推理 / 备选视角；headless 默认 `--permission-mode bypassPermissions` |
+| `codex` | OpenAI | 执行（算法 / 补丁 diff） |
+| `cursor` | 多模型 | 执行 / 审查（仓库感知） |
+| `grok` | xAI | 搜集 / 交叉审查（联网） |
+| `antigravity`(`agy`) | Google | 搜集 / 审查（gemini 个人版已停用的继任者） |
+| `mimo` | 小米 | 国内兜底 |
 
-> 这五个是**多轮可委派**伙伴（可写/可跑）。若只要**只读、单发的独立二次意见**，用 `external-agent` skill（`--agent cursor` / `grok` / `antigravity`）——两套并存、定位不同。
+- **搜集** → `--mode review`（只读）：联网→`grok`，啃大库→`antigravity`。
+- **执行** → `--mode delegate`（可写，需用户授权）：仓库内→`cursor`/`codex`，纯算法→`codex`，国内→`mimo`。
+- **交叉审核** → `--mode review`，同一产物丢给 **≥2 个不同家族** 的 agent（如 `codex`+`grok`+`antigravity`），主 Agent 汇总裁决。
+- 派之前 `--list` 查可用性；`--SESSION_ID` 多轮续接。
 
-每个 skill 的 `scripts/selfcheck.sh` 可一键自检（CLI 在位 + 一发 round-trip）。
-
-按级别用法：
-- **L0**：实现阶段的可独立子任务可并行委派（配合 worktree），各跑各的再汇总。
-- **L1/L2**：实现前让协作 CLI 出一版原型 / diff 作参考；改完请它做跨模型代码评审——是 `requesting-code-review` 的二诊，不替代它。
-- **L3**：根因难定位时，把复现信息丢给协作 CLI 要"第二意见"，最终仍以 `systematic-debugging` 的结论为准。
-- **L4**：不必（白费 token）。
-
-**纪律**：委派不降级流程——判级、理解度关卡、TDD、人工评审仍由本工作流主导；协作 CLI 的产出是输入、不是免检的最终答案，必须过本级关卡校验。`--model` / `--agent` 非用户明确指定不要传。
+**纪律**：委派不降级流程——判级、理解度关卡、TDD、人工评审仍由本工作流主导；agent 产出是证据、不是免检的最终答案，必须过本级关卡校验。`--mode delegate`（可写）须用户授权、且只在 `--cd` 内。`--model` 非用户明确指定不要传。
 
 ---
 
