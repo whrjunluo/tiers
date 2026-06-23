@@ -1,6 +1,6 @@
 ---
 name: external-agent
-description: Use when delegating a bounded sub-task to an external coding-agent CLI (codex, cursor, grok, mimo, antigravity/agy, gemini) or getting an independent second opinion — gather info, implement, or cross-review. One runner, one routing policy.
+description: Use when delegating a bounded sub-task to an external coding-agent CLI (codex, cursor, grok, mimo, opencode, antigravity/agy, gemini) or getting an independent second opinion — gather info, implement, or cross-review. One runner, one routing policy.
 ---
 
 # External Agent
@@ -39,6 +39,7 @@ python3 <plugin-root>/scripts/external_agent.py \
 | `grok` | xAI | web search, alternative reasoning | **gather / cross-review** |
 | `antigravity` (`agy`) | Google | independent agentic review (Gemini successor) | **gather / review** |
 | `mimo` | Xiaomi | China-available, Chinese reasoning | execute / review (fallback) |
+| `opencode` | open-source, BYO provider | repo-aware execute/review on your own (often free/self-hosted) models | execute / review |
 | `gemini` | Google | long context — **legacy: individual tiers disabled, migrate to `antigravity`** | (enterprise only) |
 
 > The `gemini` CLI returns `IneligibleTierError` for free / Pro / Ultra accounts since
@@ -50,7 +51,7 @@ python3 <plugin-root>/scripts/external_agent.py \
 Classify the sub-task, then pick mode + agent:
 
 - **Gather info / research** → `--mode review`. Web/external facts → `grok`; large codebase/doc digest → `antigravity`. Read-only.
-- **Execute / implement** → `--mode delegate` (needs user OK). Repo edits → `cursor` or `codex`; pure algorithm → `codex`; domestic/fallback → `mimo`. Read-write, scoped to `--cd`.
+- **Execute / implement** → `--mode delegate` (needs user OK). Repo edits → `cursor` or `codex`; pure algorithm → `codex`; own/free/self-hosted models → `opencode`; domestic/fallback → `mimo`. Read-write, scoped to `--cd`.
 - **Cross-review** → `--mode review`, run the **same artifact through ≥2 agents of different families** (e.g. `codex` + `grok` + `antigravity` — not two GPT-family agents), then the main agent reconciles. Diversity is the point: same-family agents share blind spots.
 
 Before routing, run `--list` and only pick installed agents. If the user names an agent, use it; if they just say "external agent", ask which unless context makes it obvious.
