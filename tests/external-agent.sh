@@ -30,6 +30,7 @@ make_stub gemini       '{"role":"assistant","content":"gemini ok","session_id":"
 make_stub mimo         '{"sessionID":"M1","type":"text","part":{"id":"p1","text":"mimo ok"}}'
 make_stub cursor-agent '{"is_error":false,"subtype":"success","result":"cursor ok","session_id":"C1"}'
 make_stub grok         '{"text":"grok ok","stopReason":"EndTurn","sessionId":"K1"}'
+make_stub opencode     '{"sessionID":"O1","type":"text","part":{"id":"p1","text":"opencode ok"}}'
 make_stub agy          'agy ok'
 
 run() { PATH="$SBOX/bin:$PATH" python3 "$RUNNER" "$@"; }
@@ -37,7 +38,7 @@ field() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$2',''))" 
 
 # --- each agent: json contract parsed correctly -----------------------------
 for pair in "codex|codex ok|T1" "gemini|gemini ok|G1" "mimo|mimo ok|M1" \
-            "cursor|cursor ok|C1" "grok|grok ok|K1"; do
+            "cursor|cursor ok|C1" "grok|grok ok|K1" "opencode|opencode ok|O1"; do
   IFS='|' read -r ag msg sid <<<"$pair"
   out="$(run --agent "$ag" --cd "$SBOX/repo" --format json --PROMPT "hi")"
   [ "$(field "$out" success)" = "True" ] || fail "$ag did not succeed: $out"
@@ -98,7 +99,7 @@ SKILL="$HERE/skills/external-agent/SKILL.md"
 [ -f "$SKILL" ] || fail "external-agent skill missing"
 grep -q '^name: external-agent$' "$SKILL" || fail "skill name missing"
 grep -q 'external_agent.py' "$SKILL" || fail "runner usage missing from skill"
-for a in codex gemini mimo cursor grok antigravity; do
+for a in codex gemini mimo cursor grok opencode antigravity; do
   grep -q "$a" "$SKILL" || fail "$a missing from skill"
 done
 grep -q 'external-agent' "$HERE/skills/dev-workflow/SKILL.md" || fail "dev-workflow routing missing"

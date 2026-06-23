@@ -12,7 +12,7 @@
 - **跨 session 续行**：每个项目一份状态文件，脚本独占读写，换会话不丢进度。
 - **跨项目自主进化**：你纠正判级 → 积累 → 同类够阈值 → 提案把规则固化进 skill（人工放行）。
 - **codegraph 判级集成**：装了 `code-review-graph` 时用客观风险分校准级别；没装则自动降级为纯人工判级。
-- **统一外部 Agent 委派**：一个 `external-agent` skill + `scripts/external_agent.py` runner，按"搜集 / 实现 / 交叉审核"路由到 codex / cursor / grok / mimo / antigravity（agy）；`--mode review`（只读二次意见）或 `--mode delegate`（授权后可写），`--SESSION_ID` 多轮续接、`--format json` 归一输出。委派不降级工作流，主 Agent 负责核验。
+- **统一外部 Agent 委派**：一个 `external-agent` skill + `scripts/external_agent.py` runner，按"搜集 / 实现 / 交叉审核"路由到 codex / cursor / grok / mimo / opencode / antigravity（agy）；`--mode review`（只读二次意见）或 `--mode delegate`（授权后可写），`--SESSION_ID` 多轮续接、`--format json` 归一输出。委派不降级工作流，主 Agent 负责核验。
 
 ---
 
@@ -86,15 +86,9 @@ bash bin/init [--repo <项目路径>] [--yes]
 
 ### 调用外部 Agent（可选）
 
-`external-agent` 支持三个独立 CLI：
+`external-agent` 支持多个独立 CLI：`codex / cursor / grok / mimo / opencode / antigravity`（各自的安装与登录见下方「依赖」表；`--list` 查当前已装可用的）。它们是独立 agent、各自鉴权，不是同一 agent 的不同模型。
 
-| Agent | CLI | 登录 / 初始化 |
-|---|---|---|
-| Antigravity | `agy` | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，然后运行 `agy` |
-| Cursor Agent | `cursor-agent` | 安装 Cursor Agent CLI 后运行 `cursor-agent login` |
-| Grok | `grok` | 安装 Grok CLI 后运行 `grok login` |
-
-个人免费账号及 Google AI Pro/Ultra 用户使用 Gemini 相关能力时，先安装并登录 Antigravity CLI：
+个人免费账号及 Google AI Pro/Ultra 用户使用 Gemini 相关能力时，先安装并登录 Antigravity CLI（gemini CLI 个人版已停用）：
 
 ```bash
 curl -fsSL https://antigravity.google/cli/install.sh | bash
@@ -113,7 +107,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
   --cd "$PWD" --mode delegate --format json --PROMPT '实现 X，输出 diff'
 ```
 
-`--agent` 可选 `codex / cursor / grok / mimo / antigravity`（`--list` 查可用）。`--mode review`（默认，只读二次意见）/ `--mode delegate`（授权后可写）。`--context git` 把分支、`git status`、diff 摘要与当前 diff 作为共享上下文附加到任务前；研究类问题用 `--context none`。`--format json` 归一为 `{success, SESSION_ID, agent_messages}`，`--SESSION_ID` 多轮续接。runner 用保守权限参数、不会静默回退到别的 agent。不要把密钥、`.env` 内容或无关私有文件发送给外部 Agent。
+`--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`（`--list` 查可用）。`--mode review`（默认，只读二次意见）/ `--mode delegate`（授权后可写）。`--context git` 把分支、`git status`、diff 摘要与当前 diff 作为共享上下文附加到任务前；研究类问题用 `--context none`。`--format json` 归一为 `{success, SESSION_ID, agent_messages}`，`--SESSION_ID` 多轮续接。runner 用保守权限参数、不会静默回退到别的 agent。不要把密钥、`.env` 内容或无关私有文件发送给外部 Agent。
 
 ## 脚本路径
 
@@ -165,6 +159,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 | [Antigravity CLI](https://antigravity.google/) | `external-agent` 调用 Antigravity 独立二次意见 | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，然后运行 `agy` 登录 |
 | Cursor Agent CLI | `external-agent` 调用 Cursor Agent 独立二次意见 | 安装 Cursor Agent CLI 后运行 `cursor-agent login` |
 | Grok CLI | `external-agent` 调用 Grok 独立二次意见 | 安装 Grok CLI 后运行 `grok login` |
+| OpenCode CLI | `external-agent` 调用 opencode（开源、自配 provider） | 安装后确保 `opencode` 在 PATH（把其安装目录的 `bin/opencode` 软链到已在 PATH 的目录），并 `opencode auth login` 配置 provider |
 
 > superpowers 在 Claude Code 须通过官方插件安装（命令行无法自动完成）；其他平台安装其 skill 文件即可。
 
@@ -172,8 +167,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 
 - `dev-workflow` — 工作流路由主 skill。
 - `grill-me` — L0/L1 设计文档定稿前追问一轮、补边界。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
-- `external-agent` — 统一外部 agent 委派：一个 `scripts/external_agent.py` runner 路由到 codex / cursor / grok / mimo / antigravity（agy），支持 `--mode review|delegate`、`--format text|json`、`--SESSION_ID` 多轮、`--context git`、`--list`。codex/gemini 适配解析逻辑参考自 [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT），其余为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
-- `external-agent` — 用户授权后通过 `agy`、`cursor-agent` 或 `grok` 获取独立审查、挑战或研究结果。
+- `external-agent` — 统一外部 agent 委派：一个 `scripts/external_agent.py` runner 路由到 codex / cursor / grok / mimo / opencode / antigravity（agy），支持 `--mode review|delegate`、`--format text|json`、`--SESSION_ID` 多轮、`--context git`、`--list`。codex/gemini 适配解析逻辑参考自 [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT），其余为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
 
 ## 平台兼容
 

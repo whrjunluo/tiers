@@ -155,13 +155,27 @@ def _agy(prompt, cd, mode, sid, model, skip_perm):
     return cmd, "raw", None
 
 
+def _opencode(prompt, cd, mode, sid, model, skip_perm):
+    # opencode shares MiMoCode's CLI surface and NDJSON event schema (same upstream).
+    cmd = ["opencode", "run", "--format", "json", "--dir", cd]
+    if skip_perm:
+        cmd.append("--dangerously-skip-permissions")
+    if model:
+        cmd += ["--model", model]
+    if sid:
+        cmd += ["--session", sid]
+    cmd.append(prompt)
+    return cmd, "mimo", None
+
+
 AGENTS = {
-    "codex":       {"bin": "codex",        "build": _codex,  "resume": True},
-    "gemini":      {"bin": "gemini",       "build": _gemini, "resume": True},
-    "mimo":        {"bin": "mimo",         "build": _mimo,   "resume": True},
-    "cursor":      {"bin": "cursor-agent", "build": _cursor, "resume": True},
-    "grok":        {"bin": "grok",         "build": _grok,   "resume": True},
-    "antigravity": {"bin": "agy",          "build": _agy,    "resume": False},
+    "codex":       {"bin": "codex",        "build": _codex,    "resume": True},
+    "gemini":      {"bin": "gemini",       "build": _gemini,   "resume": True},
+    "mimo":        {"bin": "mimo",         "build": _mimo,     "resume": True},
+    "cursor":      {"bin": "cursor-agent", "build": _cursor,   "resume": True},
+    "grok":        {"bin": "grok",         "build": _grok,     "resume": True},
+    "opencode":    {"bin": "opencode",     "build": _opencode, "resume": True},
+    "antigravity": {"bin": "agy",          "build": _agy,      "resume": False},
 }
 ALIASES = {"agy": "antigravity", "cursor-agent": "cursor"}
 
