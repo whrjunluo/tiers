@@ -12,8 +12,7 @@
 - **跨 session 续行**：每个项目一份状态文件，脚本独占读写，换会话不丢进度。
 - **跨项目自主进化**：你纠正判级 → 积累 → 同类够阈值 → 提案把规则固化进 skill（人工放行）。
 - **codegraph 判级集成**：装了 `code-review-graph` 时用客观风险分校准级别；没装则自动降级为纯人工判级。
-- **多模型协作委派**：内置 `collaborating-with-codex / -gemini / -mimo / -cursor-agent / -grok`，可把子任务横向委派给外部编码 agent CLI 做原型 / 调试二诊 / 跨模型评审；接口对齐、`SESSION_ID` 多轮续接，委派不降级工作流。
-- **外部 Agent 二次意见**：用户授权后，可通过 Antigravity CLI（`agy`）、Cursor Agent CLI（`cursor-agent`）或 Grok CLI（`grok`）做独立审查、方案挑战或研究；三者是独立外部 agent，不是同一 agent 的不同模型；主 Agent 负责核验结论。
+- **统一外部 Agent 委派**：一个 `external-agent` skill + `scripts/external_agent.py` runner，按"搜集 / 实现 / 交叉审核"路由到 codex / cursor / grok / mimo / antigravity（agy）；`--mode review`（只读二次意见）或 `--mode delegate`（授权后可写），`--SESSION_ID` 多轮续接、`--format json` 归一输出。委派不降级工作流，主 Agent 负责核验。
 
 ---
 
@@ -30,7 +29,7 @@
 
 - 安装时选 **user scope**，让所有项目、终端与桌面/网页客户端都生效。
 - 装完**完全重启 Claude Code**（退出进程重开，不只是新开对话），让 skill 与 hook 加载。
-- 验证：`/` 菜单出现 `dev-workflow:dev-workflow`、`dev-workflow:grill-me`、`dev-workflow:external-agent` 和三个 `dev-workflow:collaborating-with-*` skill。
+- 验证：`/` 菜单出现 `dev-workflow:dev-workflow`、`dev-workflow:grill-me`、`dev-workflow:external-agent`。
 
 ### Codex（从源码安装）
 
@@ -105,11 +104,16 @@ agy
 之后可要求主 Agent“用 external-agent / agy / cursor-agent / grok 独立审查这次改动”。底层 runner 也可直接使用：
 
 ```bash
-printf '%s\n' '独立审查当前改动，只报告有证据的问题' \
-  | <plugin-root>/scripts/external-agent.sh --agent antigravity --repo "$PWD" --context git
+# 只读独立审查当前改动
+python3 <plugin-root>/scripts/external_agent.py --agent antigravity \
+  --cd "$PWD" --context git --PROMPT '独立审查当前改动，只报告有证据的问题'
+
+# 授权后让 agent 实现（可写，限定在 --cd 内）
+python3 <plugin-root>/scripts/external_agent.py --agent codex \
+  --cd "$PWD" --mode delegate --format json --PROMPT '实现 X，输出 diff'
 ```
 
-把 `--agent antigravity` 换成 `--agent cursor` 或 `--agent grok` 可调用另外两个独立 agent。`--context git` 会把当前分支、`git status`、diff 摘要、变更文件列表和当前 diff 作为共享上下文附加到任务前面；不需要仓库上下文的研究类问题可用 `--context none`。runner 会为各 CLI 使用保守权限参数，不会静默回退到别的 agent。不要把密钥、`.env` 内容或无关私有文件发送给外部 Agent。
+`--agent` 可选 `codex / cursor / grok / mimo / antigravity`（`--list` 查可用）。`--mode review`（默认，只读二次意见）/ `--mode delegate`（授权后可写）。`--context git` 把分支、`git status`、diff 摘要与当前 diff 作为共享上下文附加到任务前；研究类问题用 `--context none`。`--format json` 归一为 `{success, SESSION_ID, agent_messages}`，`--SESSION_ID` 多轮续接。runner 用保守权限参数、不会静默回退到别的 agent。不要把密钥、`.env` 内容或无关私有文件发送给外部 Agent。
 
 ## 脚本路径
 
@@ -168,7 +172,7 @@ printf '%s\n' '独立审查当前改动，只报告有证据的问题' \
 
 - `dev-workflow` — 工作流路由主 skill。
 - `grill-me` — L0/L1 设计文档定稿前追问一轮、补边界。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
-- `collaborating-with-codex` / `collaborating-with-gemini` / `collaborating-with-mimo` / `collaborating-with-cursor-agent` / `collaborating-with-grok` — 把子任务委派给 Codex / Gemini / MiMoCode / Cursor Agent / Grok CLI；统一 JSON 输出（`success` / `SESSION_ID` / `agent_messages`），`scripts/selfcheck.sh` 一键自检。codex/gemini vendored from [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT）；mimo/cursor-agent/grok 为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
+- `external-agent` — 统一外部 agent 委派：一个 `scripts/external_agent.py` runner 路由到 codex / cursor / grok / mimo / antigravity（agy），支持 `--mode review|delegate`、`--format text|json`、`--SESSION_ID` 多轮、`--context git`、`--list`。codex/gemini 适配解析逻辑参考自 [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT），其余为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
 - `external-agent` — 用户授权后通过 `agy`、`cursor-agent` 或 `grok` 获取独立审查、挑战或研究结果。
 
 ## 平台兼容

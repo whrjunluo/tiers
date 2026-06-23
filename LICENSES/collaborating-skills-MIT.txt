@@ -1,22 +1,14 @@
-Bundled collaboration skills — provenance & license
-====================================================
+External-agent runner — provenance & license
+=============================================
 
-The following skills are bundled under this plugin's skills/ directory.
-Each ships its full MIT license text in its own LICENSE file:
+The unified runner `scripts/external_agent.py` delegates to external coding-agent
+CLIs. Its per-agent adapters and output parsing are covered by the repository
+LICENSE (MIT), with the following provenance note:
 
-- skills/collaborating-with-codex   — MIT, Copyright (c) 2025 GudaStudio
-    Source: GuDaStudio/skills
-- skills/collaborating-with-gemini  — MIT, Copyright (c) 2025 GudaStudio
-    Source: GuDaStudio/skills
-- skills/collaborating-with-mimo    — MIT
-    Derived from collaborating-with-codex (same structure), adapted for the
-    MiMoCode CLI (`mimo run`). Distributed under the same MIT terms.
-- skills/collaborating-with-cursor-agent — MIT
-    Original work for this repository (wraps `cursor-agent -p --output-format json`).
-    Covered by the repository LICENSE.
-- skills/collaborating-with-grok     — MIT
-    Original work for this repository (wraps `grok -p --output-format json`).
-    Covered by the repository LICENSE.
+- codex / gemini stream parsing logic is adapted from the collaborating-with-codex
+  and collaborating-with-gemini skills in GuDaStudio/skills (MIT, Copyright (c)
+  2025 GudaStudio).
+- mimo / cursor / grok / antigravity adapters are original work for this
+  repository.
 
-codex/gemini ship their own LICENSE file; the original skills (mimo, cursor-agent,
-grok) are covered by the repository LICENSE.
+All distributed under the repository's MIT terms.
