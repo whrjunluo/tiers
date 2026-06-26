@@ -7,6 +7,8 @@ dw_plugin_root() {
     printf '%s' "$CODEX_PLUGIN_ROOT"
   elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
     printf '%s' "$CLAUDE_PLUGIN_ROOT"
+  elif [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    printf '%s' "$CURSOR_PLUGIN_ROOT"
   else
     cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
   fi
@@ -14,22 +16,35 @@ dw_plugin_root() {
 
 PLUGIN_ROOT="$(dw_plugin_root)"
 
+# 旧版按工具分目录（Claude / Codex）的历史数据区，仅用于一次性迁移。
+dw_legacy_data_dirs() {
+  printf '%s\n%s\n' "$HOME/.codex/dev-workflow" "$HOME/.claude/dev-workflow"
+}
+
 dw_data_dir() {
-  # 数据区按「实际在跑哪个工具」判定，不靠磁盘上是否存在 ~/.codex 之类的痕迹，
-  # 否则一个在 Claude 里跑、但机器上装过 Codex 的用户数据会被写错目录。
+  # 跨工具统一一份全局数据区，方便 AI 自我进化时所有客户端（Claude / Codex / Cursor）
+  # 共享同一份 LEARNINGS.md。可用 DEV_WORKFLOW_DATA 显式覆盖（测试 / 自定义）。
   local d
   if [ -n "${DEV_WORKFLOW_DATA:-}" ]; then
-    d="$DEV_WORKFLOW_DATA"                       # 显式覆盖，最高优先
-  elif [ -n "${CODEX_PLUGIN_ROOT:-}" ] || [ -n "${CODEX_HOME:-}" ]; then
-    d="${CODEX_HOME:-$HOME/.codex}/dev-workflow" # 确在 Codex 下运行
+    d="$DEV_WORKFLOW_DATA"          # 显式覆盖，最高优先
   else
-    d="$HOME/.claude/dev-workflow"               # 默认 Claude（含 CLAUDE_PLUGIN_ROOT）
+    d="$HOME/.dev-workflow"         # 统一全局数据区，跨工具共享
   fi
   mkdir -p "$d"
   printf '%s' "$d"
 }
 
 dw_ensure_learnings() {
-  local d; d="$(dw_data_dir)"
-  [ -f "$d/LEARNINGS.md" ] || cp "$PLUGIN_ROOT/templates/LEARNINGS.md" "$d/LEARNINGS.md"
+  local d legacy; d="$(dw_data_dir)"
+  [ -f "$d/LEARNINGS.md" ] && return 0
+
+  # 首次落地：把旧版分目录里的历史进化记录迁移进统一数据区（优先 Codex，其次 Claude）。
+  while IFS= read -r legacy; do
+    if [ "$legacy/LEARNINGS.md" != "$d/LEARNINGS.md" ] && [ -f "$legacy/LEARNINGS.md" ]; then
+      cp "$legacy/LEARNINGS.md" "$d/LEARNINGS.md"
+      return 0
+    fi
+  done < <(dw_legacy_data_dirs)
+
+  cp "$PLUGIN_ROOT/templates/LEARNINGS.md" "$d/LEARNINGS.md"
 }

@@ -12,7 +12,7 @@ bash "$HERE/bin/install-codex" --codex-home "$CODEX_HOME" --yes >/dev/null
 [ -L "$CODEX_HOME/skills/dev-workflow" ] || { echo "FAIL: dev-workflow skill link missing"; exit 1; }
 [ -L "$CODEX_HOME/skills/grill-me" ] || { echo "FAIL: grill-me skill link missing"; exit 1; }
 [ -L "$CODEX_HOME/skills/external-agent" ] || { echo "FAIL: external-agent skill link missing"; exit 1; }
-[ -f "$CODEX_HOME/dev-workflow/LEARNINGS.md" ] || { echo "FAIL: LEARNINGS not initialized"; exit 1; }
+[ -f "$HOME/.dev-workflow/LEARNINGS.md" ] || { echo "FAIL: LEARNINGS not initialized in unified data dir"; exit 1; }
 [ -f "$CODEX_HOME/plugins/local-marketplace/.agents/plugins/marketplace.json" ] || { echo "FAIL: marketplace missing"; exit 1; }
 grep -q '\[plugins."dev-workflow@local"\]' "$CODEX_HOME/config.toml" || { echo "FAIL: plugin config missing"; exit 1; }
 grep -q 'enabled = true' "$CODEX_HOME/config.toml" || { echo "FAIL: plugin not enabled"; exit 1; }

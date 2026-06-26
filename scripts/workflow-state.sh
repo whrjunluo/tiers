@@ -9,7 +9,7 @@ REPO="$PWD"
 if [ "${1:-}" = "--repo" ]; then REPO="$2"; shift 2; fi
 STATE="$REPO/docs/superpowers/.workflow-state.yaml"
 
-VALID_PHASES="brainstorm grill spec plan tdd review done"
+VALID_PHASES="brainstorm grill spec plan tdd review fidelity-verify done"
 VALID_FIELDS="task level phase updated next artifacts.spec artifacts.plan"
 
 die(){ echo "✗ $1" >&2; exit 1; }
@@ -35,7 +35,7 @@ case "${1:-}" in
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     field="$2"; value="$3"
     in_list "$field" "$VALID_FIELDS" || die "未知字段 $field（允许: $VALID_FIELDS）"
-    [ "$field" = "phase" ] && { in_list "$value" "$VALID_PHASES" || die "非法 phase $value（允许: $VALID_PHASES）"; }
+    [ "$field" = "phase" ] && { in_list "$value" "$VALID_PHASES" || die "非法 phase ${value}（允许: $VALID_PHASES）"; }
     # auto-update the "updated" field
     today="$(date +%F)"
     tmp="$(mktemp)"

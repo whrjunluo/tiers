@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Print the dev-workflow capability matrix for this machine/project.
+set -euo pipefail
+PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}"
+exec "$PLUGIN_ROOT/scripts/dependency-doctor.sh" "$@"

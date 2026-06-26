@@ -12,6 +12,8 @@
 - **跨 session 续行**：每个项目一份状态文件，脚本独占读写，换会话不丢进度。
 - **跨项目自主进化**：你纠正判级 → 积累 → 同类够阈值 → 提案把规则固化进 skill（人工放行）。
 - **codegraph 判级集成**：装了 `code-review-graph` 时用客观风险分校准级别；没装则自动降级为纯人工判级。
+- **依赖 doctor + 内置兜底**：检测 skills / CLI / MCP 能力，输出 base / enhanced / full 模式；缺增强依赖时不阻塞核心工作流。
+- **对抗评审 provider 分层**：没有外部模型时走内置 checklist；有平台子代理、多模型或外部 CLI 时升级为只读交叉评审。
 - **统一外部 Agent 委派**：一个 `external-agent` skill + `scripts/external_agent.py` runner，按"搜集 / 实现 / 交叉审核"路由到 codex / cursor / grok / mimo / opencode / antigravity（agy）；`--mode review`（只读二次意见）或 `--mode delegate`（授权后可写），`--SESSION_ID` 多轮续接、`--format json` 归一输出。委派不降级工作流，主 Agent 负责核验。
 
 ---
@@ -50,6 +52,28 @@ bash bin/install-codex --install-deps
 
 不加则只打印这两条命令，让你手动决定。
 
+### Cursor（从源码安装）
+
+```bash
+git clone https://github.com/whrjunluo/tiers.git
+cd tiers
+bash bin/install-cursor
+```
+
+`install-cursor` 是**机器级一次性安装**，会：把 `dev-workflow`、`grill-me`、`external-agent` 三个 skill 链接进 `~/.cursor/skills/`（旧同名 skill 先备份）、初始化跨工具统一的全局数据区。装完 **Reload Window 或完全重启 Cursor**，让 skill 索引重新加载。
+
+- 验证：Agent 里输入 `/` 能看到 `dev-workflow` / `grill-me` / `external-agent`，或直接描述开发需求触发自动判级。
+- 同样支持 `--install-deps` 一并安装伴侣 skill（`npx skills add`）。
+- **关于 hook**：Cursor 的 `beforeSubmitPrompt`（对应 Claude 的 `UserPromptSubmit`）只能放行/拦截、**不能向模型注入上下文**，故不安装"判级纠正提醒"hook。该能力由常驻的 `dev-workflow` skill 兜底——判级被纠正时 Agent 会主动用 `learnings.sh` 记录，**进化功能完整**，仅少了 Claude/Codex 上那层自动提醒。
+
+> Cursor 也认 `.cursor-plugin/plugin.json`，所以本仓库同时是一个合法的 Cursor 插件；若日后上架 Cursor Marketplace 或用本地插件目录（`~/.cursor/plugins/local/`）安装，同一份 `skills/` 可直接复用。
+
+安装后可随时跑 doctor 看当前能力等级：
+
+```bash
+bash bin/doctor --repo <你的项目路径>
+```
+
 ---
 
 ## 初始化项目（可选）
@@ -83,6 +107,41 @@ bash bin/init [--repo <项目路径>] [--yes]
 ```
 
 如果新会话没有自动判级，通常是 Codex 还没重新加载 skill 索引。先重启 Codex；排查时再临时点名 `dev-workflow`，看 skill 是否已安装成功。
+
+### 能力模式
+
+`dev-workflow` 不要求用户先装齐所有伴侣 skill/MCP 才能使用。运行：
+
+```bash
+bash bin/doctor --repo <项目路径>
+```
+
+会输出当前模式：
+
+| 模式 | 含义 |
+|---|---|
+| `base` | 只依赖本插件内置 skill 与必需命令；L1/L2/L3 走内置 brainstorm / plan / TDD / debugging / review / verify 协议 |
+| `enhanced` | 检测到 superpowers、codegraph 等增强能力；优先调用对应 skill/CLI |
+| `full` | 额外具备设计保真、已建图 codegraph 等能力；可做更完整客观校验 |
+| `broken` | 缺少 bash / awk / python3 / git 或本插件内置 skill 不完整 |
+
+doctor 还会输出对抗评审能力：
+
+| 状态 | 含义 |
+|---|---|
+| `built-in` | 没有额外 provider，使用内置反方 checklist |
+| `external-partial` | 检测到 1 个外部 CLI，可做二次意见但不算完整交叉评审 |
+| `external-ready` | 检测到 2 个以上外部 CLI，可做不同家族交叉评审 |
+
+平台内子代理和多模型能力由运行时检测：如果当前 Codex/Claude 暴露 subagent 工具，`dev-workflow` 会优先使用平台子代理；用户明确允许多模型时，再给 reviewer 分配不同模型。没有这些能力时不阻塞，退回内置 checklist。
+
+默认不会静默安装依赖。需要自动安装可脚本化依赖时，显式运行：
+
+```bash
+bash bin/doctor --repo <项目路径> --install-deps
+```
+
+MCP、Figma 授权、外部 agent 登录这类需要用户权限的能力只会给出下一步，不会自动改本机授权状态。
 
 ### 调用外部 Agent（可选）
 
@@ -142,20 +201,21 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 
 | 数据 | 位置 | 作用域 |
 |---|---|---|
-| 进化日志 `LEARNINGS.md` | `$DEV_WORKFLOW_DATA`；未设时 Claude 默认 `~/.claude/dev-workflow/`、Codex 默认 `~/.codex/dev-workflow/` | 全局跨项目 |
+| 进化日志 `LEARNINGS.md` | `$DEV_WORKFLOW_DATA`；未设时统一为 `~/.dev-workflow/`（Claude / Codex / Cursor 共享一份，首次运行自动从旧的 `~/.codex/dev-workflow`、`~/.claude/dev-workflow` 迁移） | 全局跨工具、跨项目 |
 | 续行状态 | `<项目>/docs/superpowers/.workflow-state.yaml`（自动 gitignore） | 单项目 |
 
 ## 依赖
 
 **必需**：bash、awk、python3、git
 
-不装这些也**完全可用**（自动降级）；装上解锁更完整体验。`bin/init` 缺失时会打印安装命令；加 `bin/init --install-deps` 会**自动安装可脚本化的依赖**（superpowers 在 Claude 上仍需手动，见下）。
+不装这些也**完全可用**：核心路径会走内置协议；装上解锁更完整体验。`bin/doctor` 和 `bin/init` 会打印缺失能力；加 `--install-deps` 会**自动安装可脚本化的依赖**（superpowers 在 Claude 上仍需手动，见下）。
 
 | 可选依赖 | 解锁什么 | 安装命令 |
 |---|---|---|
 | [superpowers](https://github.com/obra/superpowers) | L1 的 brainstorm / TDD / plans / review 完整 skill 链 | **Claude Code**：`/plugin install superpowers@claude-plugins-official`<br>**Codex / 其他**：`npx skills@latest add obra/superpowers` |
 | [code-review-graph](https://github.com/nicobailon/code-review-graph) | codegraph 判级校验（上表 Mode A/B） | `uv tool install code-review-graph`（或 `pipx install` / `pip install`） |
 | [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-with-docs` | 内置 `grill-me` 的升级（锚定 CONTEXT.md / ADR），装了即优先用 | `npx skills@latest add mattpocock/skills` |
+| `figma-fidelity-verification` skill / MCP bundle | UI 设计稿保真验收的取数与量化核对 | 按该 skill/MCP bundle 的安装说明完成授权；未安装时走内置人工验收 checklist |
 | [Antigravity CLI](https://antigravity.google/) | `external-agent` 调用 Antigravity 独立二次意见 | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，然后运行 `agy` 登录 |
 | Cursor Agent CLI | `external-agent` 调用 Cursor Agent 独立二次意见 | 安装 Cursor Agent CLI 后运行 `cursor-agent login` |
 | Grok CLI | `external-agent` 调用 Grok 独立二次意见 | 安装 Grok CLI 后运行 `grok login` |
@@ -169,9 +229,13 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 - `grill-me` — L0/L1 设计文档定稿前追问一轮、补边界。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
 - `external-agent` — 统一外部 agent 委派：一个 `scripts/external_agent.py` runner 路由到 codex / cursor / grok / mimo / opencode / antigravity（agy），支持 `--mode review|delegate`、`--format text|json`、`--SESSION_ID` 多轮、`--context git`、`--list`。codex/gemini 适配解析逻辑参考自 [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT），其余为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
 
+## 诊断脚本
+
+- `bin/doctor` / `scripts/dependency-doctor.sh` — 输出当前机器和项目的能力矩阵；默认只检测，`--install-deps` 才安装可脚本化依赖。
+
 ## 平台兼容
 
-同一份 `skills/`、`scripts/`、`hooks.json` 同时服务两端：Claude Code 通过 `.claude-plugin/`，Codex 通过 `.codex-plugin/`。脚本用 `DEV_WORKFLOW_PLUGIN_ROOT` / `CODEX_PLUGIN_ROOT` / `CLAUDE_PLUGIN_ROOT` 统一解析路径，无任何硬编码绝对路径。
+同一份 `skills/`、`scripts/` 服务三端：Claude Code 通过 `.claude-plugin/`，Codex 通过 `.codex-plugin/`，Cursor 通过 `.cursor-plugin/`（skill 链接进 `~/.cursor/skills/`）。`hooks.json` 的"判级纠正提醒"hook 仅 Claude/Codex 启用；Cursor 不支持 prompt 提交时注入上下文，改由常驻 skill 兜底。脚本用 `DEV_WORKFLOW_PLUGIN_ROOT` / `CODEX_PLUGIN_ROOT` / `CLAUDE_PLUGIN_ROOT` / `CURSOR_PLUGIN_ROOT` 统一解析路径，无任何硬编码绝对路径。
 
 ## License
 

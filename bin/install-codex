@@ -145,6 +145,8 @@ add_companion() { # $1=repo  $2=display
 have_skill_dir '*superpowers*' || add_companion obra/superpowers "superpowers（L1 完整 skill 链）"
 have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-docs（内置 grill-me 的可选升级）"
 
+CODEX_HOME="$CODEX_HOME_DIR" "$PLUGIN_ROOT/bin/doctor" --codex-home "$CODEX_HOME_DIR" --platform codex || true
+
 echo "✓ Installed dev-workflow for Codex"
 echo "✓ Plugin: $PLUGIN_ROOT"
 echo "✓ Skills: $CODEX_HOME_DIR/skills/dev-workflow, $CODEX_HOME_DIR/skills/grill-me, $CODEX_HOME_DIR/skills/external-agent"

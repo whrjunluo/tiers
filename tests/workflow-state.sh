@@ -13,6 +13,8 @@ f="$REPO/docs/superpowers/.workflow-state.yaml"
 
 bash "$WS" --repo "$REPO" set phase spec
 [ "$(bash "$WS" --repo "$REPO" get phase)" = "spec" ] || { echo "FAIL: set/get phase"; exit 1; }
+bash "$WS" --repo "$REPO" set phase fidelity-verify >/dev/null
+[ "$(bash "$WS" --repo "$REPO" get phase)" = "fidelity-verify" ] || { echo "FAIL: set/get fidelity-verify phase"; exit 1; }
 
 # check: illegal phase should error
 bash "$WS" --repo "$REPO" set phase 乱写 2>/dev/null && { echo "FAIL: 非法 phase 应拒绝"; exit 1; } || true
