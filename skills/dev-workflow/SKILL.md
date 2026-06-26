@@ -114,6 +114,27 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 
 ---
 
+## 设计保真验收关卡（各级通用，收尾 HARD-GATE）
+
+理解度关卡守"动手前懂没懂"，这道关守"做完后是否按设计源完成"。**凡产出可见 UI 且有设计稿（Figma 等）的任务，不论判到 L1/L2/L3/L4，收尾标 done 前必过此关。** 纯逻辑改动、无设计稿的 UI 文案微调豁免。
+
+> ⛔ **HARD-GATE（保真收尾强制，优先级高于"渲染无报错就算完"的直觉）**
+> 凭「页面可渲染 / 关键标题在场 / 视觉上大致接近」**不算对齐设计稿**，禁止据此声明 done。必须做完下面**两步，缺一不算过**：
+>
+> 1. **整屏完整性核对** — 逐区块对设计稿核对「有无漏做整块区域 / 组件范式是否一致」。防止只看到局部元素就误判整屏已完成。
+> 2. **逐元素量化比对** — 关键元素的设计稿量化值（尺寸 / 圆角（含单角圆角）/ 色值 / 字号字重 / 间距 / 描边）用 **DOM inspect / 实测**逐项对设计真值，**禁凭"看着像 / 渲染无报错"放行**。
+>
+> **取数与执行纪律：**
+> - 设计真值由**取数中枢 REST 直取**（Figma REST 等：图片导出 + 节点树量化值），不要依赖视觉印象或二手描述猜测。
+> - 实现可委派，但**验收必须由主流程本端完成**（preview 逐区 inspect），不能只依赖实现方自报"已对齐"。
+> - 配套方法见 skill `figma-fidelity-verification`（含 REST 取真值 → 写 death-spec → 派 agent 实现 → 逐区量化验收的完整 loop，本文不重复其内容）。
+>
+> **未过此关不得标 done。** 自检红旗：当你准备说"对齐设计稿了 / 这个页面做完了"，但**本任务还没做整屏核对 + 逐元素 inspect**——立即停下，回到关卡。
+
+> 状态机（L1/L2 维护 workflow-state 时）：收尾前补一个 `fidelity-verify` 阶段标记，两步都过再 `set phase done`。见下方「跨 session 续行」。
+
+---
+
 ## codegraph 辅助判级（可选，三层降级）
 
 L2 及以上、或判级拿不准时，跑 codegraph 守卫获取客观信号：
@@ -280,7 +301,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 ```yaml
 task: 一句话描述当前需求
 level: L1
-phase: spec          # brainstorm | grill | spec | plan | tdd | review | done
+phase: spec          # brainstorm | grill | spec | plan | tdd | review | fidelity-verify | done
 artifacts:
   spec: docs/superpowers/specs/YYYY-MM-DD-xxx-design.md
   plan: ""
@@ -293,7 +314,7 @@ next: 下一步具体该做什么
 2. **定级后**：跑 `workflow-state.sh init`（首次创建），再 `set task/level/phase`。
    > L1 阶段流转：`brainstorm` →（理解度关卡）→ 理解不足则 `set phase grill`、收敛后再 `set phase spec`；自评足够且用户点头可直接 `set phase spec`。禁止 brainstorm 不经关卡判定直接跳 spec。
 3. **每过一个阶段**：`set phase/next`，有 spec/plan 则 `set artifacts.spec/artifacts.plan`。
-4. **收尾（仅 L0/L1）**：`set phase done`。脚本自动更新 `updated`。
+4. **收尾（仅 L0/L1）**：若本任务产出可见 UI 且有设计稿，先 `set phase fidelity-verify`，过「设计保真验收关卡」两步后再 `set phase done`；无 UI 改动则直接 `set phase done`。脚本自动更新 `updated`。
 
 ---
 

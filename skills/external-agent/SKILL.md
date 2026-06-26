@@ -46,12 +46,16 @@ python3 <plugin-root>/scripts/external_agent.py \
 > the June 2026 migration. Use `antigravity` (`agy`) for Google-family work. The
 > `gemini` adapter is kept only for enterprise Code Assist users who still have access.
 
+> ⚠️ **调用返回拒绝/空产出时，优先检查调用方式，而不是归因到具体 agent。**
+> 对长 prompt、敏感领域或保真验收要求高的任务，先收敛输入范围、拆分上下文、降低无关敏感表述；
+> 若仍返回拒绝/空产出，切换执行路径或换用更适合当前约束的 agent，不要反复重试同一 prompt。
+
 ## Routing policy (the brain)
 
 Classify the sub-task, then pick mode + agent:
 
 - **Gather info / research** → `--mode review`. Web/external facts → `grok`; large codebase/doc digest → `antigravity`. Read-only.
-- **Execute / implement** → `--mode delegate` (needs user OK). Repo edits → `cursor` or `codex`; pure algorithm → `codex`; own/free/self-hosted models → `opencode`; domestic/fallback → `mimo`. Read-write, scoped to `--cd`.
+- **Execute / implement** → `--mode delegate` (needs user OK). Repo edits → `cursor` or `codex`; pure algorithm → `codex`; own/free/self-hosted models → `opencode`; China-available execution → `mimo`. If a call returns refusal/empty output, adjust the invocation or switch execution path instead of repeating the same prompt. Read-write, scoped to `--cd`.
 - **Cross-review** → `--mode review`, run the **same artifact through ≥2 agents of different families** (e.g. `codex` + `grok` + `antigravity` — not two GPT-family agents), then the main agent reconciles. Diversity is the point: same-family agents share blind spots.
 
 Before routing, run `--list` and only pick installed agents. If the user names an agent, use it; if they just say "external agent", ask which unless context makes it obvious.
