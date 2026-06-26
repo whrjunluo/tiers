@@ -2,7 +2,7 @@
 # dev-workflow 安装器：建数据区、确保 gitignore、引导/可选安装伴侣依赖、检测 codegraph。
 # 默认只「检测 + 打印安装命令」；加 --install-deps 才真正动手装可脚本化的依赖（opt-in）。
 set -euo pipefail
-PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}"
+PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CURSOR_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}}"
 source "$PLUGIN_ROOT/scripts/lib.sh"
 
 REPO="$PWD"; YES=0; INSTALL_DEPS=0
@@ -14,11 +14,15 @@ while [ "${1:-}" ]; do case "$1" in
 esac; done
 
 # 运行平台探测（决定 superpowers 装法 / codegraph MCP 平台）
-if [ -n "${CODEX_PLUGIN_ROOT:-}" ] || [ -n "${CODEX_HOME:-}" ]; then PLATFORM=codex; else PLATFORM=claude-code; fi
+if [ -n "${CODEX_PLUGIN_ROOT:-}" ] || [ -n "${CODEX_HOME:-}" ]; then
+  PLATFORM=codex
+elif [ -n "${CURSOR_PLUGIN_ROOT:-}" ] || [ -n "${CURSOR_HOME:-}" ]; then
+  PLATFORM=cursor
+else
+  PLATFORM=claude-code
+fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
-have_skill() { find "$HOME/.claude" "${CODEX_HOME:-$HOME/.codex}" -maxdepth 6 -type d -name "$1" 2>/dev/null | grep -q .; }
-
 # 1. 数据区 + LEARNINGS
 dw_ensure_learnings
 echo "✓ 用户数据区：$(dw_data_dir)"
@@ -29,39 +33,12 @@ grep -qxF "docs/superpowers/.workflow-state.yaml" "$GI" 2>/dev/null || \
   echo "docs/superpowers/.workflow-state.yaml" >> "$GI"
 echo "✓ 已确保 .gitignore 忽略续行状态"
 
-# 3. superpowers（伴侣 skill 链；Claude 走官方 plugin，Codex/其他走 skill 文件）
-if ! find "$HOME/.claude" "${CODEX_HOME:-$HOME/.codex}" -maxdepth 5 -type d -name '*superpowers*' 2>/dev/null | grep -q .; then
-  echo "ℹ 未检测到 superpowers —— L1 的 brainstorm/TDD/plans/review 将降级为内联描述。安装："
-  echo "    Claude Code： /plugin install superpowers@claude-plugins-official  （完整，含 hook）"
-  echo "    Codex/其他：  npx skills@latest add obra/superpowers                （skill 文件；Codex 无 hook 损失）"
-  if [ "$INSTALL_DEPS" = 1 ] && [ "$PLATFORM" = codex ]; then
-    echo "→ 正在为 Codex 安装 superpowers skill 文件…"
-    npx -y skills@latest add obra/superpowers || echo "  ⚠ 自动安装失败，请手动跑上面的命令。"
-  fi
-fi
+# 3. capability doctor（统一检测；默认只提示，--install-deps 才安装可脚本化依赖）
+doctor_args=(--repo "$REPO" --platform "$PLATFORM")
+if [ "$INSTALL_DEPS" = 1 ]; then doctor_args+=(--install-deps); fi
+CODEX_HOME="${CODEX_HOME:-}" "$PLUGIN_ROOT/scripts/dependency-doctor.sh" "${doctor_args[@]}"
 
-# 3b. grill-with-docs（内置 grill-me 的可选升级，纯 skill，可自动装）
-if ! have_skill grill-with-docs; then
-  echo "ℹ（可选）grill-with-docs 是内置 grill-me 的升级（锚定 CONTEXT.md/ADR）；不装也能用内置版。安装："
-  echo "    npx skills@latest add mattpocock/skills"
-  if [ "$INSTALL_DEPS" = 1 ]; then
-    echo "→ 正在安装 grill-with-docs…"
-    npx -y skills@latest add mattpocock/skills || echo "  ⚠ 自动安装失败，请手动跑上面的命令。"
-  fi
-fi
-
-# 4. codegraph CLI（缺则可选自动装；在则可选注册 MCP）
-if ! have code-review-graph; then
-  echo "ℹ 未检测到 code-review-graph —— 判级纯人工进行（功能完整）。装它可解锁判级校验："
-  echo "    uv tool install code-review-graph   （或 pipx install code-review-graph / pip install code-review-graph）"
-  if [ "$INSTALL_DEPS" = 1 ]; then
-    echo "→ 正在安装 code-review-graph…"
-    if have uv;   then uv tool install code-review-graph
-    elif have pipx; then pipx install code-review-graph
-    elif have pip;  then pip install code-review-graph
-    else echo "  ⚠ 没有 uv/pipx/pip，无法自动安装，请手动装。"; fi || echo "  ⚠ 自动安装失败，请手动装。"
-  fi
-fi
+# 4. codegraph MCP（CLI 缺失时 doctor 已提示/安装；这里只做项目级注册）
 if have code-review-graph; then
   echo "✓ code-review-graph 可用 —— codegraph 判级校验已就绪（Mode A）"
   if [ "$YES" = 1 ] || { read -rp "为本 repo 注册 codegraph MCP（解锁事前依赖查询 Mode B）? [y/N] " a; [ "$a" = y ]; }; then

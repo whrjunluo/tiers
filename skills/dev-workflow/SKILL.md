@@ -48,13 +48,55 @@ description: Use when any development task appears, including new features, bug 
 1. `DEV_WORKFLOW_PLUGIN_ROOT`
 2. `CODEX_PLUGIN_ROOT`
 3. `CLAUDE_PLUGIN_ROOT`
-4. 若是从本文件路径推断，则从 `skills/dev-workflow/SKILL.md` 上溯两级到仓库根目录
+4. `CURSOR_PLUGIN_ROOT`
+5. 若是从本文件路径推断，则从 `skills/dev-workflow/SKILL.md` 上溯两级到仓库根目录
 
 脚本自身也按同样规则自动推断，Codex 环境不要依赖 Claude 专属变量。
 
 ## 使用时机
 
 每次接到新的开发任务时，先跑决策树确定级别，再按对应步骤执行。
+
+## 能力模式与依赖兜底
+
+本插件的核心路径必须在只安装本插件时可用；外部 skill、MCP、CLI 都是增强能力，不是硬依赖。
+
+开工或排障时可运行：
+
+```bash
+<plugin-root>/bin/doctor [--repo <repo>] [--install-deps]
+```
+
+- **base**：只依赖本插件内置流程和必需命令。可以完成判级、spec/plan/TDD/debug/review/verify 的内置协议。
+- **enhanced**：检测到 superpowers、codegraph 等伴侣能力时，优先调用对应 skill/CLI 增强体验。
+- **full**：额外检测到设计保真、已建图 codegraph 等环境时，开启更完整的客观校验。
+
+执行规则：
+- 若本文点名的外部 skill 可用，优先按该 skill 执行。
+- 若不可用，不要卡住或要求用户先安装；改走本文写明的**内置协议**。
+- 不静默安装依赖。只有用户显式要求或传 `--install-deps` 时，才安装可脚本化依赖；MCP/登录类能力只提示下一步。
+- 若用户问“为什么某功能不可用”，先跑 `bin/doctor` 给出能力矩阵，再决定是否安装或降级。
+
+## 对抗评审关卡（provider 分层）
+
+对抗评审是独立关卡，不绑定某个外部 CLI。目标是让至少一个“反方视角”专门找风险，主流程负责裁决。
+
+触发规则：
+- L0/L1：默认执行。
+- L2：影响面大、安装/配置/数据迁移/权限相关时执行；很小的单点改动可用内置 checklist。
+- L3：复杂根因、偶现 bug、修复路径有替代解释时执行。
+- L4：默认跳过。
+
+provider 优先级：
+1. **平台子代理（platform-agents）**：当前运行时暴露 subagent/multi-agent 工具且用户允许使用时，优先派 1-2 个只读 reviewer。不同 reviewer 用不同审查角色，例如“回归风险 reviewer”和“安装/降级路径 reviewer”。
+2. **平台多模型（multi-model）**：若平台允许指定模型，且用户明确允许多模型，给 reviewer 分配不同模型；不允许或不可用时，同模型不同 prompt 也可用。
+3. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，用 ≥2 个不同家族外部 CLI 做只读 review；`external-partial` 时只作为二次意见，不算完整交叉评审。
+4. **内置对抗 checklist（built-in）**：没有任何 provider 时也必须可执行。检查：最可能的回归点、缺依赖/缺 MCP 降级路径、安装脚本是否静默改环境、README/skill/脚本承诺是否一致、测试是否覆盖失败路径。
+
+纪律：
+- 不为对抗评审静默安装 provider；需要安装时只提示 `bin/doctor --install-deps` 或登录步骤。
+- 只读 review 默认不允许写文件。外部或子代理输出是证据，不是结论，主流程必须逐条裁决。
+- 若用户未授权平台子代理/外部 agent，则走内置 checklist，不阻塞交付。
 
 ---
 
@@ -194,14 +236,14 @@ L4 微调不跑（风险≈0，白跑）。
 > 自检红旗：当你发现自己"准备写 spec / 准备调 writing-plans / 准备建 specs 目录"，但**本任务还没过理解度关卡**——立即停下，回到关卡。
 
 **执行步骤：**
-1. `brainstorming` skill — 澄清需求，提出 2-3 方案，用户确认，起草设计文档到 `docs/superpowers/specs/`
+1. `brainstorming` skill（若可用）— 澄清需求，提出 2-3 方案，用户确认，起草设计文档到 `docs/superpowers/specs/`。若不可用，执行内置 brainstorm 协议：读项目上下文 → 提出 2-3 个方案和推荐项 → 向用户确认范围 → 写一份简短 spec 到同目录。
 2. **理解度关卡（必经）** — 按上方 HARD-GATE 判定：理解不足/拿不准 → 进第 3 步 grill；自评足够 → 向用户提议跳过、**取得点头后**直接进第 4 步。
 3. **`grill-me` skill（理解度不足时触发，本插件内置）** — 对着设计文档追问，逐个解决决策树分支、暴露边界情况，把答案回填进文档，理解收敛达标才退出。
    > 内置 `grill-me` 是零依赖基线。若用户自行装了更强的追问 skill（如 `mattpocock/skills` 的 `grill-with-docs`，锚定 CONTEXT.md/ADR、边问边更新文档），则优先用它。
-4. `writing-plans` skill — 基于已收敛的设计文档写 plan 到 `docs/superpowers/plans/`
-5. `test-driven-development` skill — 先写失败测试，再实现，测试通过后提交
-6. `requesting-code-review` skill — 请求代码审查
-7. `verification-before-completion` skill — 验证功能符合 spec 后关闭任务
+4. `writing-plans` skill（若可用）— 基于已收敛的设计文档写 plan 到 `docs/superpowers/plans/`。若不可用，执行内置 plan 协议：列文件影响面、逐任务写 Red/Green/Refactor 步骤、每步给命令和验收点。
+5. `test-driven-development` skill（若可用）— 先写失败测试，再实现，测试通过后提交。若不可用，执行内置 TDD 协议：先写最小失败测试并确认失败原因正确，再写实现，最后跑目标测试和全量测试。
+6. `requesting-code-review` skill（若可用）— 请求代码审查；随后按「对抗评审关卡」选择 provider。若 review skill 不可用，执行内置 review checklist：检查行为回归、缺失测试、安装/降级路径、文档承诺是否与实现一致。
+7. `verification-before-completion` skill（若可用）— 验证功能符合 spec 后关闭任务。若不可用，执行内置 verification checklist：重跑相关测试、演练缺依赖场景、确认 README/skill/脚本口径一致。
 
 > L0 的范围审视/架构验证阶段同样可以用 `grill-me` 追问设计；L2 只有轻量 spec，一般不必；L3/L4 无设计文档，跳过。
 
@@ -214,9 +256,9 @@ L4 微调不跑（风险≈0，白跑）。
 **执行步骤：**
 1. 写一段简短的需求说明（不需要完整 brainstorming，3-5 句话描述目标和边界）
 2. **理解度关卡（轻量，见上）** — 一句话自检：谁在消费这块 / 回归边界在哪 / 能写出覆盖测试吗？拿不准 → `codegraph-judge assess` 或读消费方；影响面超预期 → 回去重判级。
-3. `test-driven-development` skill — 先写覆盖改动点的失败测试
+3. `test-driven-development` skill（若可用）— 先写覆盖改动点的失败测试；若不可用，走内置 TDD 协议：先红、再绿、再清理。
 4. 实现，让测试通过
-5. （可选）`requesting-code-review` skill — 影响面大时使用
+5. （可选）`requesting-code-review` skill；命中对抗评审触发规则时按 provider 分层执行；不可用时用内置 review checklist
 
 ---
 
@@ -225,7 +267,7 @@ L4 微调不跑（风险≈0，白跑）。
 **触发条件：** 线上问题、行为回归、测试失败的已知 bug。
 
 **执行步骤：**
-1. `systematic-debugging` skill — 系统性定位根因，不要凭感觉猜
+1. `systematic-debugging` skill（若可用）— 系统性定位根因，不要凭感觉猜；若不可用，走内置 debugging 协议：复现 → 缩小范围 → 提出根因假设 → 用日志/测试验证假设 → 再修复。
 2. **根因关卡（轻量，见上）** — 写修复前自检：我定位到真正根因了，还是在改症状冒出点？答不上 → 留在 systematic-debugging 别动手；若"修复"其实是加新行为 → 回去重判级（可能 L2）。
 3. 写一个能复现 bug 的失败测试（先红）
 4. 修复，让测试变绿
@@ -324,11 +366,11 @@ next: 下一步具体该做什么
 
 配套工具（均在 `<plugin-root>/scripts/`）：
 - `learnings.sh` —— 记录/计数 helper：`count` / `ready` / `categories` / `add <category> <project> <note>` / `list`。`add` 会校验 category 取自词表、原子追加，并回报当前计数是否达阈值。
-- `detect-judging-correction.py` —— UserPromptSubmit hook（由 `plugin.json` 声明，启用插件即生效）：用户提交消息时回看上一轮，若疑似纠正判级则注入提醒，让我别忘了记录。检测不到一律静默。
+- `detect-judging-correction.py` —— Claude/Codex 上挂在 UserPromptSubmit（由 `plugin.json` 声明，启用插件即生效）：用户提交消息时回看上一轮，若疑似纠正判级则注入提醒。**仅 Claude/Codex 有此提醒**：Cursor 的 `beforeSubmitPrompt` 不能向模型注入上下文，故 Cursor 上不安装此 hook —— 此时由我**主动**履行下面的记录职责，不等提醒。
 
 ### 记录（被动积累）
 
-每当**用户纠正我一次判级**（hook 通常会提醒），或某 tie-breaker 事后被证伪/证实，立即用脚本记录：
+每当**用户纠正我一次判级**，或某 tie-breaker 事后被证伪/证实，立即用脚本记录。**这是我的固定职责，不依赖 hook 提醒**——Claude/Codex 上 hook 会顺手提醒一句，Cursor 上没有提醒，但只要本 skill 在跑，判级被纠正时我就必须记：
 
 ```
 <plugin-root>/scripts/learnings.sh add <category> <project> "<note>"
@@ -336,7 +378,7 @@ next: 下一步具体该做什么
 - `category` 必须取自词表（脚本会拒绝非法值）；同类纠正务必贴同一标签，否则计数失效。确属新类时先在数据区（`learnings.sh` 自动定位）词表补一行再 add。
 - `note` 写清「我原判 Lx → 用户纠正为 Ly，因为…」。
 
-hook 只是"提醒"不是"代劳"——它不会自动写记录，记不记仍由我执行 `add`。这是本机制保留的人工环节。
+hook 只是"提醒"不是"代劳"——它从不自动写记录，记不记永远由我执行 `add`。这是本机制保留的人工环节，也保证了去掉 hook（如 Cursor）功能依旧完整。
 
 ### 检查与提案（开工时触发）
 
