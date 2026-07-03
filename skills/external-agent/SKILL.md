@@ -56,7 +56,7 @@ Classify the sub-task, then pick mode + agent:
 
 - **Gather info / research** → `--mode review`. Web/external facts → `grok`; large codebase/doc digest → `antigravity`. Read-only.
 - **Execute / implement** → `--mode delegate` (needs user OK). Repo edits → `cursor` or `codex`; pure algorithm → `codex`; own/free/self-hosted models → `opencode`; China-available execution → `mimo`. If a call returns refusal/empty output, adjust the invocation or switch execution path instead of repeating the same prompt. Read-write, scoped to `--cd`.
-- **Cross-review** → `--mode review`, run the **same artifact through ≥2 agents of different families** (e.g. `codex` + `grok` + `antigravity` — not two GPT-family agents), then the main agent reconciles. Diversity is the point: same-family agents share blind spots.
+- **Cross-review** → `--mode review`, run the **same artifact through ≥2 external CLI agents of different families** (prefer `antigravity`/`agy`, `grok`, `cursor`, `mimo`; use `codex` as one reviewer only when the main orchestrator is not Codex). Platform subagents are not a substitute for this external cross-review gate. The main agent reconciles; diversity is the point because same-family agents share blind spots.
 
 Before routing, run `--list` and only pick installed agents. If the user names an agent, use it; if they just say "external agent", ask which unless context makes it obvious.
 

@@ -83,20 +83,21 @@ description: Use when any development task appears, including new features, bug 
 
 触发规则：
 - L0/L1：默认执行。
-- L2：影响面大、安装/配置/数据迁移/权限相关时执行；很小的单点改动可用内置 checklist。
+- L2：影响面大、安装/配置/数据迁移/权限相关时执行；涉及 auth / route guard / API integration / order / IM / prescription / payment / 数据写入 / 权限守卫等业务闭环时**强制执行**，不得用“很小的单点改动”降级；非业务闭环的很小单点改动可用内置 checklist。
 - L3：复杂根因、偶现 bug、修复路径有替代解释时执行。
 - L4：默认跳过。
 
 provider 优先级：
-1. **平台子代理（platform-agents）**：当前运行时暴露 subagent/multi-agent 工具且用户允许使用时，优先派 1-2 个只读 reviewer。不同 reviewer 用不同审查角色，例如“回归风险 reviewer”和“安装/降级路径 reviewer”。
-2. **平台多模型（multi-model）**：若平台允许指定模型，且用户明确允许多模型，给 reviewer 分配不同模型；不允许或不可用时，同模型不同 prompt 也可用。
-3. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，用 ≥2 个不同家族外部 CLI 做只读 review；`external-partial` 时只作为二次意见，不算完整交叉评审。
+1. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，或 `external_agent.py --list` 显示 ≥2 个不同家族外部 CLI 可用，优先用 ≥2 个不同家族外部 CLI 做只读 review。高风险业务闭环任务必须先尝试此项；`external-partial`、认证失败、空产出或只剩同家族 provider 时只算二次意见，不算完整交叉评审。
+2. **平台子代理（platform-agents）**：仅当外部交叉评审不可用、用户明确要求平台子代理、或作为外部 review 之外的补充时使用。不同 reviewer 用不同审查角色，例如“回归风险 reviewer”和“安装/降级路径 reviewer”。平台子代理不能替代已触发的外部交叉评审。
+3. **平台多模型（multi-model）**：若平台允许指定模型，且用户明确允许多模型，给 reviewer 分配不同模型；不允许或不可用时，同模型不同 prompt 也可用。
 4. **内置对抗 checklist（built-in）**：没有任何 provider 时也必须可执行。检查：最可能的回归点、缺依赖/缺 MCP 降级路径、安装脚本是否静默改环境、README/skill/脚本承诺是否一致、测试是否覆盖失败路径。
 
 纪律：
 - 不为对抗评审静默安装 provider；需要安装时只提示 `bin/doctor --install-deps` 或登录步骤。
 - 只读 review 默认不允许写文件。外部或子代理输出是证据，不是结论，主流程必须逐条裁决。
-- 若用户未授权平台子代理/外部 agent，则走内置 checklist，不阻塞交付。
+- 若用户未授权平台子代理/外部 agent，则走内置 checklist，不阻塞交付；但高风险业务闭环任务必须在 final 里标明“外部交叉评审未完成”，不能写成已过完整对抗评审。
+- 收尾时必须展示采用的 provider、review 摘要、主流程裁决；若本应外部交叉评审但未完成，必须明确写出阻塞原因，禁止静默降级后声明“已完成”。
 
 ---
 
@@ -175,11 +176,27 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 
 > 状态机（L1/L2 维护 workflow-state 时）：收尾前补一个 `fidelity-verify` 阶段标记，两步都过再 `set phase done`。见下方「跨 session 续行」。
 
+## 业务闭环验收关卡（L1/L2/L3 通用，收尾 HARD-GATE）
+
+凡涉及 auth / route guard / API integration / order / IM / prescription / payment / 数据写入 / 权限守卫等真实业务链路，收尾标 done 前必须证明业务闭环真实成立。**页面能打开、组件能渲染、mock 数据可见、类型检查通过，都不能替代业务闭环验收。**
+
+> ⛔ **HARD-GATE（业务闭环完成强制）**
+> 必须给出本端执行过的证据，缺一项就不能说完成：
+>
+> 1. **入口与守卫** — 未登录、已登录、深链/刷新、无权限或过期态按需求表现；不能出现未登录可进受保护首页这类绕守卫路径。
+> 2. **真实请求** — 关键动作必须触发预期真实接口；记录方法、URL/路由、状态码、关键 request/response 字段。若环境只能 mock，必须明说“未过真实请求验收”，不能标 done。
+> 3. **端到端结果** — UI 状态、服务端/持久化状态、错误态/401/403/失败路径至少覆盖任务核心分支。
+> 4. **证据清单** — final 输出必须列出测试命令、浏览器/接口演练、codegraph 结果、对抗评审 provider 与裁决、仍未覆盖的风险。
+>
+> 高风险业务闭环任务（auth、路由守卫、API 写入、订单、IM、处方、支付、权限）在完成前还必须跑 `codegraph-judge assess`；若 codegraph 不可用，只能记录“codegraph 降级为人工影响面审查”的证据，不能省略影响面审查。人工影响面审查至少要列：改动文件清单、每个文件影响、受影响业务 flow、测试缺口、为什么仍满足 L1/L2/L3 判级。
+>
+> 状态机（L0/L1 维护 workflow-state 时）：涉及业务闭环的任务收尾前必须 `set phase business-verify`，证据清单齐全后才允许 `set phase done`；若同时有设计稿，再按顺序进入 `fidelity-verify`。
+
 ---
 
-## codegraph 辅助判级（可选，三层降级）
+## codegraph 辅助判级与收尾证据（三层降级）
 
-L2 及以上、或判级拿不准时，跑 codegraph 守卫获取客观信号：
+L2 及以上、或判级拿不准时，跑 codegraph 守卫获取客观信号；高风险业务闭环任务在收尾前必须把 codegraph 结果或降级原因写进证据清单：
 
 ```bash
 <plugin-root>/scripts/codegraph-judge.sh [--repo <repo>] [--base <base>] assess
@@ -243,7 +260,8 @@ L4 微调不跑（风险≈0，白跑）。
 4. `writing-plans` skill（若可用）— 基于已收敛的设计文档写 plan 到 `docs/superpowers/plans/`。若不可用，执行内置 plan 协议：列文件影响面、逐任务写 Red/Green/Refactor 步骤、每步给命令和验收点。
 5. `test-driven-development` skill（若可用）— 先写失败测试，再实现，测试通过后提交。若不可用，执行内置 TDD 协议：先写最小失败测试并确认失败原因正确，再写实现，最后跑目标测试和全量测试。
 6. `requesting-code-review` skill（若可用）— 请求代码审查；随后按「对抗评审关卡」选择 provider。若 review skill 不可用，执行内置 review checklist：检查行为回归、缺失测试、安装/降级路径、文档承诺是否与实现一致。
-7. `verification-before-completion` skill（若可用）— 验证功能符合 spec 后关闭任务。若不可用，执行内置 verification checklist：重跑相关测试、演练缺依赖场景、确认 README/skill/脚本口径一致。
+7. 若涉及业务闭环，按「业务闭环验收关卡」完成真实请求与守卫演练；缺证据不得标 done。
+8. `verification-before-completion` skill（若可用）— 验证功能符合 spec 后关闭任务。若不可用，执行内置 verification checklist：重跑相关测试、演练缺依赖场景、确认 README/skill/脚本口径一致。
 
 > L0 的范围审视/架构验证阶段同样可以用 `grill-me` 追问设计；L2 只有轻量 spec，一般不必；L3/L4 无设计文档，跳过。
 
@@ -259,6 +277,7 @@ L4 微调不跑（风险≈0，白跑）。
 3. `test-driven-development` skill（若可用）— 先写覆盖改动点的失败测试；若不可用，走内置 TDD 协议：先红、再绿、再清理。
 4. 实现，让测试通过
 5. （可选）`requesting-code-review` skill；命中对抗评审触发规则时按 provider 分层执行；不可用时用内置 review checklist
+6. 若涉及业务闭环，按「业务闭环验收关卡」完成真实请求与守卫演练；缺证据不得标 done
 
 ---
 
@@ -271,7 +290,8 @@ L4 微调不跑（风险≈0，白跑）。
 2. **根因关卡（轻量，见上）** — 写修复前自检：我定位到真正根因了，还是在改症状冒出点？答不上 → 留在 systematic-debugging 别动手；若"修复"其实是加新行为 → 回去重判级（可能 L2）。
 3. 写一个能复现 bug 的失败测试（先红）
 4. 修复，让测试变绿
-5. 确认没有引入新回归后提交
+5. 若修复涉及业务闭环，按「业务闭环验收关卡」补跑守卫、真实请求、错误态演练；缺证据不得标 done
+6. 确认没有引入新回归后提交
 
 ---
 
@@ -329,6 +349,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 | 复制现有页面改文案做一个新页面 | L4（纯文案）；若新增逻辑分支则 L2 |
 | 修一个偶现的线上 bug | L3（必须先复现再改） |
 | 升级依赖 / 改构建配置 | L2（可能回归），波及面大升 L0 |
+| auth / route guard / API integration / order / IM / prescription / payment / 权限守卫闭环 | L2 起步；新增完整流程或跨模块业务编排升 L1；完成前必须过业务闭环验收、codegraph 证据、外部交叉评审 |
 
 ---
 
@@ -343,7 +364,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 ```yaml
 task: 一句话描述当前需求
 level: L1
-phase: spec          # brainstorm | grill | spec | plan | tdd | review | fidelity-verify | done
+phase: spec          # brainstorm | grill | spec | plan | tdd | review | business-verify | fidelity-verify | done
 artifacts:
   spec: docs/superpowers/specs/YYYY-MM-DD-xxx-design.md
   plan: ""
@@ -356,7 +377,7 @@ next: 下一步具体该做什么
 2. **定级后**：跑 `workflow-state.sh init`（首次创建），再 `set task/level/phase`。
    > L1 阶段流转：`brainstorm` →（理解度关卡）→ 理解不足则 `set phase grill`、收敛后再 `set phase spec`；自评足够且用户点头可直接 `set phase spec`。禁止 brainstorm 不经关卡判定直接跳 spec。
 3. **每过一个阶段**：`set phase/next`，有 spec/plan 则 `set artifacts.spec/artifacts.plan`。
-4. **收尾（仅 L0/L1）**：若本任务产出可见 UI 且有设计稿，先 `set phase fidelity-verify`，过「设计保真验收关卡」两步后再 `set phase done`；无 UI 改动则直接 `set phase done`。脚本自动更新 `updated`。
+4. **收尾（仅 L0/L1）**：若本任务涉及业务闭环，先 `set phase business-verify`，过「业务闭环验收关卡」后才可继续；若本任务产出可见 UI 且有设计稿，再 `set phase fidelity-verify`，过「设计保真验收关卡」两步后再 `set phase done`；无对应 gate 才能直接 `set phase done`。脚本自动更新 `updated`。
 
 ---
 
