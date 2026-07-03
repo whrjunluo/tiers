@@ -9,17 +9,18 @@ REPO="$PWD"
 if [ "${1:-}" = "--repo" ]; then REPO="$2"; shift 2; fi
 STATE="$REPO/docs/superpowers/.workflow-state.yaml"
 
-VALID_PHASES="brainstorm grill spec plan tdd review fidelity-verify done"
+VALID_PHASES="brainstorm grill spec plan tdd review business-verify fidelity-verify done"
 VALID_FIELDS="task level phase updated next artifacts.spec artifacts.plan"
 
 die(){ echo "✗ $1" >&2; exit 1; }
 in_list(){ printf '%s\n' $2 | grep -qxF "$1"; }
+is_empty_value(){ [ -z "$1" ] || [ "$1" = '""' ] || [ "$1" = "''" ]; }
 
 yget(){ # top-level or artifacts.* value extraction
   local k="$1"
   case "$k" in
-    artifacts.*) awk -v akey="${k#artifacts.}" '/^artifacts:/{f=1;next} f&&$0!~/^[[:space:]]/{f=0} f&&$1==akey":"{sub(/^[[:space:]]*[^:]+:[[:space:]]*/,"");print;exit}' "$STATE" ;;
-    *) awk -v k="$k" '$1==k":"{sub(/^[^:]+:[[:space:]]*/,"");print;exit}' "$STATE" ;;
+    artifacts.*) awk -v akey="${k#artifacts.}" '/^artifacts:/{f=1;next} f&&$0!~/^[[:space:]]/{f=0} f&&$1==akey":"{sub(/^[[:space:]]*[^:]+:[[:space:]]*/,"");sub(/[[:space:]]+#.*$/,"");print;exit}' "$STATE" ;;
+    *) awk -v k="$k" '$1==k":"{sub(/^[^:]+:[[:space:]]*/,"");sub(/[[:space:]]+#.*$/,"");print;exit}' "$STATE" ;;
   esac
 }
 
@@ -56,8 +57,9 @@ case "${1:-}" in
       echo "✓ 无续行状态（未初始化）：$STATE"
       exit 0
     fi
-    ph="$(yget phase)"; [ -z "$ph" ] || in_list "$ph" "$VALID_PHASES" || die "phase 非法: $ph"
-    sp="$(yget artifacts.spec)"; [ -z "$sp" ] || [ -f "$REPO/$sp" ] || echo "⚠ spec 文件不存在: $sp" >&2
+    ph="$(yget phase)"; is_empty_value "$ph" || in_list "$ph" "$VALID_PHASES" || die "phase 非法: $ph"
+    sp="$(yget artifacts.spec)"; is_empty_value "$sp" || [ -f "$REPO/$sp" ] || echo "⚠ spec 文件不存在: $sp" >&2
+    is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
   *) echo "用法: workflow-state.sh [--repo R] {init|get <field>|set <field> <value>|check}" >&2; exit 2 ;;
 esac

@@ -15,7 +15,7 @@ if [ ! -f "$REPO/.code-review-graph/graph.db" ]; then
   echo "ℹ codegraph 图未构建（缺 graph.db）→ 降级为纯人工判级；可运行 code-review-graph build" >&2; exit 3
 fi
 
-echo "=== codegraph 判级信号（base=$BASE）==="
+echo "=== codegraph 判级信号（base=${BASE}）==="
 code-review-graph detect-changes --brief --base "$BASE" --repo "$REPO" 2>&1
 echo "--- 判级校准提示 ---"
 echo "risk≥0.4 / 改动文件≥8 / 有 affected flow → 至少 L1；有 test gap 且改了已有函数 → 锁 L2/L3 必须补测试；risk≈0 且 0 changed → L4。冲突偏严。"
