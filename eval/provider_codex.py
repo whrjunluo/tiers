@@ -57,6 +57,7 @@ def build_prompt(fixture: dict) -> str:
     return (
         "Follow the installed dev-workflow skill and its state commands exactly. "
         "Work only inside the current repository. Do not inspect evaluation fixture files or infer gold labels. "
+        "Do not call external reviewers because this benchmark isolates provider effects; use the built-in adversarial checklist and label that downgrade truthfully. "
         f"{mode_instructions}\n\n"
         f"Task:\n{fixture['prompt']}\n\n"
         "Finish with the visible tier line required by the skill and report only evidence actually observed."

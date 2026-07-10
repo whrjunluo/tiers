@@ -44,6 +44,7 @@ class EvalCodexProviderTest(unittest.TestCase):
         self.assertIn("The user has already created a Goal", prompt)
         self.assertIn("autonomous confirmation", prompt)
         self.assertIn(fixture["prompt"], prompt)
+        self.assertIn("Do not call external reviewers", prompt)
         self.assertNotIn("user approved", prompt.casefold())
 
     def test_parse_codex_jsonl_extracts_final_and_successful_test_command(self):
