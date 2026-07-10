@@ -192,6 +192,8 @@ python3 <plugin-root>/scripts/external_agent.py --cross-review agy,mimo \
 
 L0–L3 在进入执行 phase 前还必须通过 `understand`：L0 提交架构边界/迁移/回滚证据，L1 提交需求验收/非目标，L2 提交影响面/测试边界，L3 提交稳定复现/根因。状态保存 scope 与 evidence SHA-256，手改 `status` 或替换证据不能绕过。Goal 模式只接管用户已创建的目标；objective 原文不落盘，相同目标续行复用有效理解度，目标变化会重置为 `pending`。
 
+Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和裁决者，记录 2–3 个方案、reviewer provenance、最终选择、假设和残余风险。只有 `boundary: safe`、`requires_user: false` 的 PASS artifact 能通过 `workflow-state.sh confirm`；删除数据、强制推送、发布/部署、付费、凭证/隐私和权限操作必须暂停。自治结果不得表述为用户已确认。
+
 ## 分级速查
 
 | 级别 | 典型场景 | 工作流 |

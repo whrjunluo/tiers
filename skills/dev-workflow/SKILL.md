@@ -422,6 +422,29 @@ next: 下一步具体该做什么
 
 **Goal 模式：** 只有用户已经设置 Goal 时才运行 `workflow-state.sh goal "<objective>"`；tiers 不得自行创建 Goal。自动续行使用 `continue-goal "<objective>"`，显示 `目标续行 = 第 N 次｜phase = tdd｜理解度 = 复用`。相同 objective 只增加 continuation 并保留 checkpoint；objective 发生变化时清空 checkpoint，并把 understanding 重置为 `pending`。状态只保存 objective SHA-256，不保存目标原文。单次续行结束、token 接近上限或代码写完都不等于 Goal 完成。
 
+**Goal 自治确认：** 理解度通过后依次执行**提案者 → 反方审查者 → 裁决者**。提案者给出 2–3 个可行方案；反方审查者只找误解、影响面、错误根因和越界动作；裁决者逐条处理后给出选择、依据、假设与残余风险。结果只有 **PASS → REVISE → BLOCKED**：`REVISE` 修改提案后重审，最多两轮且保持 pending；只有最终 PASS 才能写 confirmation artifact，无法收敛或越界则 BLOCKED。
+
+reviewer provenance 只能是 `external-cross-review`、`same-model-fresh-context`、`built-in-checklist`；最后一项不是独立 reviewer，不得伪装。删除数据、强制推送、发布、部署、付费、访问凭证/隐私数据、提升权限和无法从目标/仓库判断的重大产品选择都不能自治 PASS。自治 artifact 不得写“用户已确认”，只能记录 `mode: autonomous`。
+
+最小 artifact 形状如下，`scope_sha256` 取 `workflow-state.sh get understanding.scope_sha256`：
+
+```json
+{
+  "runner": "tiers.autonomous-confirmation/v1",
+  "mode": "autonomous",
+  "status": "PASS",
+  "scope_sha256": "<64-hex>",
+  "rounds": 1,
+  "requires_user": false,
+  "boundary": "safe",
+  "proposal": {"options": [{"id": "A", "summary": "..."}, {"id": "B", "summary": "..."}], "recommendation": "A", "assumptions": ["..."]},
+  "critic": {"provenance": "built-in-checklist", "verdict": "PASS", "findings": ["..."]},
+  "decision": {"choice": "A", "basis": "...", "assumptions": ["..."], "residual_risk": "..."}
+}
+```
+
+保存到 `.workflow-evidence/confirmation.json` 后运行 `workflow-state.sh confirm docs/superpowers/.workflow-evidence/confirmation.json`。通过后显示 `自治确认 = PASS｜选择 = A｜reviewer = built-in-checklist`。Goal 的执行 phase 与 `complete` 会重新验证 scope、artifact 内容 hash 和 provenance。
+
 ---
 
 ## 自主进化（全局，跨项目）
