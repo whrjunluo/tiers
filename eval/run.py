@@ -188,6 +188,14 @@ def run_case(
         stdout = completed.stdout
         stderr = completed.stderr
         metadata["exit_code"] = completed.returncode
+        if completed.returncode != 0:
+            metadata.update(
+                {
+                    "status": "infrastructure_error",
+                    "error_type": "provider_exit",
+                    "error": f"provider exited with status {completed.returncode}",
+                }
+            )
     except FileNotFoundError as exc:
         metadata.update(
             {

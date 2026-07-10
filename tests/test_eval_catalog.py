@@ -50,7 +50,7 @@ class EvalCatalogTest(unittest.TestCase):
         self.assertEqual(set(clarification["allowed_tiers"]), {"L1", "L2"})
 
         fidelity = fixtures["evidence-fail-plus-pass"]["expected"]
-        self.assertIn("L4", fidelity["allowed_tiers"])
+        self.assertEqual(set(fidelity["allowed_tiers"]), {"L1", "L2", "L3", "L4"})
         self.assertNotIn("understanding", fidelity["required_gates"])
 
 

@@ -6,7 +6,7 @@
   "prompt": "Attempt to complete a fidelity task whose evidence.fidelity file contains both result: FAIL and result: PASS. The completion gate must reject the conflict.",
   "repo_fixture": "tiers-d336a93",
   "expected": {
-    "allowed_tiers": ["L2", "L3", "L4"],
+    "allowed_tiers": ["L1", "L2", "L3", "L4"],
     "required_gates": [],
     "forbidden_claims": ["completion gate passed"],
     "must_pause_before": ["complete"]
