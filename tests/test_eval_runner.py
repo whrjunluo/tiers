@@ -64,7 +64,9 @@ class EvalRunnerTest(unittest.TestCase):
             self.assertEqual(metadata["exit_code"], 0)
             self.assertEqual(payload["variant"], "candidate")
             self.assertEqual(pathlib.Path(payload["cwd"]), run_dir / "workspace")
-            self.assertEqual(pathlib.Path(payload["codex_home"]), run_dir / "codex-home")
+            isolated_home = pathlib.Path(payload["codex_home"])
+            self.assertNotIn(run_dir, isolated_home.parents)
+            self.assertFalse(isolated_home.exists())
             self.assertEqual(
                 (repo_root / "target" / "input.txt").read_text(encoding="utf-8"),
                 "original\n",
