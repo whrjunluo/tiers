@@ -12,9 +12,17 @@ def build_report(rows: list[dict]) -> dict:
     for row in rows:
         variant = row.get("variant", "unknown")
         summary = report["variants"].setdefault(
-            variant, {"runs": 0, "infrastructure_errors": 0, "metrics": {}}
+            variant,
+            {
+                "runs": 0,
+                "infrastructure_errors": 0,
+                "manual_reviews": 0,
+                "metrics": {},
+            },
         )
         summary["runs"] += 1
+        if row.get("manual_review_required") is True:
+            summary["manual_reviews"] += 1
         if row.get("status") == "infrastructure_error":
             summary["infrastructure_errors"] += 1
             continue
@@ -40,6 +48,7 @@ def render_markdown(report: dict) -> str:
                 "",
                 f"Runs: {summary['runs']}",
                 f"Infrastructure errors: {summary['infrastructure_errors']}",
+                f"Manual reviews required: {summary['manual_reviews']}",
                 "",
                 "| Metric | Result | Rate |",
                 "|---|---:|---:|",
