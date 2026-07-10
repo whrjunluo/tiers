@@ -108,6 +108,22 @@ class EvalRunnerTest(unittest.TestCase):
             self.assertEqual(metadata["status"], "infrastructure_error")
             self.assertEqual(metadata["error_type"], "missing_provider")
 
+    def test_nonzero_provider_exit_is_an_infrastructure_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            fixture_path, repo_root = self.make_fixture(root)
+            run_dir = run_case(
+                fixture_path,
+                "candidate",
+                f'{sys.executable} -c "raise SystemExit(7)"',
+                root / "results",
+                repo_fixtures_root=repo_root,
+            )
+            metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["status"], "infrastructure_error")
+            self.assertEqual(metadata["error_type"], "provider_exit")
+            self.assertEqual(metadata["exit_code"], 7)
+
     def test_provider_can_import_eval_package_from_isolated_workspace(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
