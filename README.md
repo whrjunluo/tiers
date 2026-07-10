@@ -186,6 +186,8 @@ python3 <plugin-root>/scripts/external_agent.py --cross-review agy,mimo \
 
 `workflow-state.sh check` 在新项目没有状态文件时会输出「无续行状态」并正常退出。`complete` 通过后会写入完成时间、repository fingerprint 和 requirements hash；sealed 状态不可再 `set` 或重复完成，必须用 `start` 开下一任务。后续仓库继续开发不会使历史 done 状态失效。
 
+业务、请求与保真证据的 `result:` 必须有且仅有一行，内容为 `result: PASS`；仅有非空结果、写入失败结果或同时写入冲突结果都不会通过完成门。请求证据另外记录 `method:`、`url:` 和三位 `status:`，状态码按被验证路径的预期填写，不限定为 2xx。
+
 ## 分级速查
 
 | 级别 | 典型场景 | 工作流 |

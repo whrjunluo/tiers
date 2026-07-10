@@ -34,4 +34,18 @@ echo "$out_external" | grep -q "actual quorum requires successful calls" || { ec
 echo "$out_external" | grep -q "External agent health: slow" || { echo "FAIL: doctor should surface persistent provider health"; echo "$out_external"; exit 1; }
 echo "$out_external" | grep -q "antigravity:slow(360s)" || { echo "FAIL: doctor should include the slow provider timeout recommendation"; echo "$out_external"; exit 1; }
 
+# A broken environment still needs a complete doctor report when Python is absent.
+NO_PYTHON_BIN="$SBOX/no-python-bin"
+mkdir -p "$NO_PYTHON_BIN"
+for tool in bash awk git find grep dirname; do
+  ln -s "$(command -v "$tool")" "$NO_PYTHON_BIN/$tool"
+done
+if ! out_no_python="$(PATH="$NO_PYTHON_BIN" "$NO_PYTHON_BIN/bash" "$HERE/bin/doctor" --repo "$REPO" --codex-home "$CODEX_HOME" --platform codex 2>&1)"; then
+  echo "FAIL: doctor should finish when python3 is missing"
+  echo "$out_no_python"
+  exit 1
+fi
+echo "$out_no_python" | grep -q "Required tools: missing (python3)" || { echo "FAIL: doctor should identify missing python3"; echo "$out_no_python"; exit 1; }
+echo "$out_no_python" | grep -q "External agent health: unavailable" || { echo "FAIL: health summary should degrade cleanly without python3"; echo "$out_no_python"; exit 1; }
+
 echo "PASS tests/doctor.sh"

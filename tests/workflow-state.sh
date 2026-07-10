@@ -88,6 +88,9 @@ setf "$REPO" phase spec
 [ "$(getf "$REPO" phase)" = "spec" ] || fail "set/get phase"
 setf "$REPO" requirements.fidelity true
 [ "$(getf "$REPO" requirements.fidelity)" = "true" ] || fail "set/get nested field"
+task_with_yaml_syntax="Fix #123: Bob's login"
+setf "$REPO" task "$task_with_yaml_syntax"
+[ "$(getf "$REPO" task)" = "$task_with_yaml_syntax" ] || fail "set/get 应保留 #、冒号和单引号"
 
 INVALID_LEVEL="$(new_repo invalid-level)"
 python3 - "$INVALID_LEVEL/docs/superpowers/.workflow-state.yaml" <<'PY'
@@ -150,7 +153,7 @@ setf "$BUSINESS" context.delivery local-only
 setf "$BUSINESS" requirements.business true
 setf "$BUSINESS" evidence.tests "$(evidence "$BUSINESS" tests.txt $'command: pnpm typecheck && pnpm test\nexit_code: 0')"
 setf "$BUSINESS" evidence.business "$(evidence "$BUSINESS" business.txt $'result: PASS\nguards: logged-out, logged-in, deep-link, 401')"
-setf "$BUSINESS" evidence.requests "$(evidence "$BUSINESS" requests.txt $'method: POST\nurl: /auth/login\nstatus: 200')"
+setf "$BUSINESS" evidence.requests "$(evidence "$BUSINESS" requests.txt $'result: PASS\nmethod: POST\nurl: /auth/login\nstatus: 200')"
 setf "$BUSINESS" evidence.codegraph "$(evidence "$BUSINESS" codegraph.txt 'result: risk=0.40; gaps reviewed')"
 setf "$BUSINESS" evidence.residual_risks "$(evidence "$BUSINESS" risks.txt 'risk: none')"
 expect_fail "mock 业务环境不得完成" bash "$WS" --repo "$BUSINESS" complete
@@ -186,6 +189,14 @@ PY
 setf "$BUSINESS" evidence.external_review "$no_message"
 expect_fail "reviewer 必须有非空输出且 agent-family 映射真实" bash "$WS" --repo "$BUSINESS" complete
 setf "$BUSINESS" evidence.external_review "$(review_evidence "$BUSINESS" cross-review.json "$fingerprint" "$created_at")"
+setf "$BUSINESS" evidence.business "$(evidence "$BUSINESS" business-fail.txt $'result: FAIL\nguards: login regression')"
+expect_fail "业务证据 result: FAIL 不得完成" bash "$WS" --repo "$BUSINESS" complete
+setf "$BUSINESS" evidence.business "$(evidence "$BUSINESS" business-conflict.txt $'result: FAIL\nresult: PASS\nguards: conflicting verdicts')"
+expect_fail "业务证据同时包含 FAIL/PASS 不得完成" bash "$WS" --repo "$BUSINESS" complete
+setf "$BUSINESS" evidence.business "$(evidence "$BUSINESS" business.txt $'result: PASS\nguards: logged-out, logged-in, deep-link, 401')"
+setf "$BUSINESS" evidence.requests "$(evidence "$BUSINESS" requests-fail.txt $'result: FAIL\nmethod: POST\nurl: /auth/login\nstatus: 500')"
+expect_fail "请求证据 result: FAIL 不得完成" bash "$WS" --repo "$BUSINESS" complete
+setf "$BUSINESS" evidence.requests "$(evidence "$BUSINESS" requests.txt $'result: PASS\nmethod: POST\nurl: /auth/login\nstatus: 200')"
 bash "$WS" --repo "$BUSINESS" complete >/dev/null
 [ "$(getf "$BUSINESS" phase)" = "done" ] || fail "business complete 应进入 done"
 [ -n "$(getf "$BUSINESS" completion.completed_at)" ] || fail "complete 应记录 completed_at seal"
@@ -220,7 +231,9 @@ setf "$FIDELITY" requirements.fidelity true
 setf "$FIDELITY" evidence.tests "$(evidence "$FIDELITY" tests.txt $'command: visual tests\nexit_code: 0')"
 setf "$FIDELITY" evidence.residual_risks "$(evidence "$FIDELITY" risks.txt 'risk: none')"
 expect_fail "缺 fidelity 证据不得完成" bash "$WS" --repo "$FIDELITY" complete
-setf "$FIDELITY" evidence.fidelity "$(evidence "$FIDELITY" fidelity.txt 'result: DOM measurements match design source')"
+setf "$FIDELITY" evidence.fidelity "$(evidence "$FIDELITY" fidelity-fail.txt 'result: FAIL')"
+expect_fail "保真证据 result: FAIL 不得完成" bash "$WS" --repo "$FIDELITY" complete
+setf "$FIDELITY" evidence.fidelity "$(evidence "$FIDELITY" fidelity.txt 'result: PASS')"
 bash "$WS" --repo "$FIDELITY" complete >/dev/null
 [ "$(getf "$FIDELITY" phase)" = "done" ] || fail "fidelity complete 应进入 done"
 

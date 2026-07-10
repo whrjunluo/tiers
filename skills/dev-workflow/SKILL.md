@@ -371,7 +371,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 
 **状态文件：** 每个项目按需生成 `docs/superpowers/.workflow-state.yaml`（自动加入 `.gitignore`）。L0/L1 必须维护；auth / route guard / API integration / order / IM / prescription / payment / 数据写入 / 权限等高风险 L2/L3 也必须维护。其他短 L2–L4 可跳过。
 
-**证据目录：** `docs/superpowers/.workflow-evidence/`（自动加入 `.gitignore`）。所有 `evidence.*` 必须使用该目录内的仓库相对路径，绝对路径与 `..` 会被完成门拒绝。只存测试输出、Network 方法/URL/状态码摘要、codegraph 报告、评审 JSON 和残余风险；禁止写 token、密码、完整敏感 payload。最低格式：tests 含 `command:` + `exit_code: 0`，business/fidelity 含 `result:`，requests 含 `method:` + `url:` + 三位 `status:`，codegraph 含 `result:` 或 `degraded:`，residual_risks 含 `risk:`。
+**证据目录：** `docs/superpowers/.workflow-evidence/`（自动加入 `.gitignore`）。所有 `evidence.*` 必须使用该目录内的仓库相对路径，绝对路径与 `..` 会被完成门拒绝。只存测试输出、Network 方法/URL/状态码摘要、codegraph 报告、评审 JSON 和残余风险；禁止写 token、密码、完整敏感 payload。最低格式：tests 含 `command:` + `exit_code: 0`；business/fidelity 的 `result:` 必须有且仅有一行，内容为 `result: PASS`；requests 同样必须且只能含一行 `result: PASS`，并含 `method:` + `url:` + 三位 `status:`（状态码可以是被验证路径所预期的 2xx/4xx/5xx）；codegraph 含 `result:` 或 `degraded:`；residual_risks 含 `risk:`。任何冲突或失败结果都不得进入 `done`。
 
 **格式**（字段结构刻意设计成将来脚本可直接接管）：
 

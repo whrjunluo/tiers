@@ -169,6 +169,28 @@ run --agent agy --timeout 2 --cd "$SBOX/repo" --PROMPT review >/dev/null
 python3 -c 'import sys,json; h=json.load(open(sys.argv[1]))["agents"]["antigravity"]; assert h["status"] == "slow"; assert h["consecutive_timeouts"] == 0; assert h["success_count"] >= 1' "$HEALTH" \
   || fail "a successful retry should clear the failure streak but retain slow history"
 
+# Concurrent provider completions must not overwrite each other's health events.
+CONCURRENT_DATA="$SBOX/concurrent-health"
+mkdir -p "$CONCURRENT_DATA"
+pids=""
+for _worker in 1 2 3 4 5 6; do
+  DEV_WORKFLOW_DATA="$CONCURRENT_DATA" python3 - "$RUNNER" <<'PY' &
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("external_agent", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+for _ in range(100):
+    module._record_health("codex", "timeout", 10, 0.1, "concurrent timeout")
+PY
+  pids="$pids $!"
+done
+for pid in $pids; do wait "$pid"; done
+CONCURRENT_HEALTH="$CONCURRENT_DATA/external-agent-health.json"
+python3 -c 'import json,sys; h=json.load(open(sys.argv[1]))["agents"]["codex"]; assert h["timeout_count"] == 600, h' "$CONCURRENT_HEALTH" \
+  || fail "concurrent health writes should preserve every provider event"
+
 # A stored provider recommendation is the default; an explicit timeout remains authoritative.
 python3 - "$HEALTH" <<'PY'
 import json, sys

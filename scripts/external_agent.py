@@ -201,6 +201,8 @@ ALIASES = {"agy": "antigravity", "cursor-agent": "cursor"}
 
 DEFAULT_TIMEOUT_SECONDS = 600
 MAX_RECOMMENDED_TIMEOUT_SECONDS = 3600
+HEALTH_LOCK_TIMEOUT_SECONDS = 5.0
+HEALTH_LOCK_STALE_SECONDS = 30.0
 RUNNER_ID = "tiers.external-agent/v1"
 
 
@@ -237,6 +239,39 @@ def _write_health(data: dict) -> None:
             pass
 
 
+def _acquire_health_lock() -> Optional[str]:
+    path = f"{_health_path()}.lock"
+    deadline = time.monotonic() + HEALTH_LOCK_TIMEOUT_SECONDS
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError:
+        return None
+
+    while True:
+        try:
+            os.mkdir(path)
+            return path
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(path) > HEALTH_LOCK_STALE_SECONDS:
+                    os.rmdir(path)
+                    continue
+            except (FileNotFoundError, OSError):
+                pass
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.01)
+        except OSError:
+            return None
+
+
+def _release_health_lock(path: str) -> None:
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
 def _health_entry(agent: str) -> dict:
     return _load_health().get("agents", {}).get(agent, {})
 
@@ -252,46 +287,52 @@ def _effective_timeout(agent: str, explicit_timeout: Optional[int]) -> int:
 
 def _record_health(agent: str, event: str, timeout: int, duration: float,
                    error: str = "") -> None:
-    data = _load_health()
-    agents = data.setdefault("agents", {})
-    entry = agents.setdefault(agent, {})
-    entry.setdefault("timeout_count", 0)
-    entry.setdefault("consecutive_timeouts", 0)
-    entry.setdefault("failure_count", 0)
-    entry.setdefault("consecutive_failures", 0)
-    entry.setdefault("success_count", 0)
+    lock_path = _acquire_health_lock()
+    if lock_path is None:
+        return
+    try:
+        data = _load_health()
+        agents = data.setdefault("agents", {})
+        entry = agents.setdefault(agent, {})
+        entry.setdefault("timeout_count", 0)
+        entry.setdefault("consecutive_timeouts", 0)
+        entry.setdefault("failure_count", 0)
+        entry.setdefault("consecutive_failures", 0)
+        entry.setdefault("success_count", 0)
 
-    entry["last_duration_seconds"] = round(duration, 3)
-    entry["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if event == "timeout":
-        entry["timeout_count"] += 1
-        entry["consecutive_timeouts"] += 1
-        entry["failure_count"] += 1
-        entry["consecutive_failures"] += 1
-        entry["last_timeout_seconds"] = timeout
-        entry["recommended_timeout_seconds"] = min(
-            MAX_RECOMMENDED_TIMEOUT_SECONDS,
-            max(entry.get("recommended_timeout_seconds", 0), timeout * 2),
-        )
-        entry["status"] = "degraded" if entry["consecutive_failures"] >= 2 else "slow"
-    elif event == "failure":
-        entry["failure_count"] += 1
-        entry["consecutive_failures"] += 1
-        entry["consecutive_timeouts"] = 0
-        if entry["consecutive_failures"] >= 2:
-            entry["status"] = "degraded"
-        else:
-            entry.setdefault("status", "unknown")
-    elif event == "success":
-        entry["success_count"] += 1
-        entry["consecutive_timeouts"] = 0
-        entry["consecutive_failures"] = 0
-        entry["status"] = "slow" if entry["timeout_count"] else "healthy"
-    if error:
-        entry["last_error"] = error[:1000]
-    elif event == "success":
-        entry.pop("last_error", None)
-    _write_health(data)
+        entry["last_duration_seconds"] = round(duration, 3)
+        entry["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if event == "timeout":
+            entry["timeout_count"] += 1
+            entry["consecutive_timeouts"] += 1
+            entry["failure_count"] += 1
+            entry["consecutive_failures"] += 1
+            entry["last_timeout_seconds"] = timeout
+            entry["recommended_timeout_seconds"] = min(
+                MAX_RECOMMENDED_TIMEOUT_SECONDS,
+                max(entry.get("recommended_timeout_seconds", 0), timeout * 2),
+            )
+            entry["status"] = "degraded" if entry["consecutive_failures"] >= 2 else "slow"
+        elif event == "failure":
+            entry["failure_count"] += 1
+            entry["consecutive_failures"] += 1
+            entry["consecutive_timeouts"] = 0
+            if entry["consecutive_failures"] >= 2:
+                entry["status"] = "degraded"
+            else:
+                entry.setdefault("status", "unknown")
+        elif event == "success":
+            entry["success_count"] += 1
+            entry["consecutive_timeouts"] = 0
+            entry["consecutive_failures"] = 0
+            entry["status"] = "slow" if entry["timeout_count"] else "healthy"
+        if error:
+            entry["last_error"] = error[:1000]
+        elif event == "success":
+            entry.pop("last_error", None)
+        _write_health(data)
+    finally:
+        _release_health_lock(lock_path)
 
 
 def _health_metadata(agent: str) -> dict:
