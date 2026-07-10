@@ -8,6 +8,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,18 +81,19 @@ def run_case(
         raise FileNotFoundError(f"repo fixture not found: {source_repo}")
     workspace = run_dir / "workspace"
     shutil.copytree(source_repo, workspace)
-    codex_home = run_dir / "codex-home"
-    codex_home.mkdir()
+    codex_home = Path(tempfile.mkdtemp(prefix="tiers-eval-codex-"))
 
     argv = shlex.split(provider_command)
     if not argv:
         raise ValueError("provider command cannot be empty")
     env = os.environ.copy()
+    source_codex_home = env.get("CODEX_HOME") or str(Path.home() / ".codex")
     env.update(
         {
             "TIERS_FIXTURE": str(fixture_path),
             "TIERS_VARIANT": variant,
             "TIERS_RUN_DIR": str(run_dir),
+            "TIERS_SOURCE_CODEX_HOME": source_codex_home,
             "CODEX_HOME": str(codex_home),
         }
     )
@@ -145,6 +147,8 @@ def run_case(
                 "error": f"provider timed out after {timeout}s",
             }
         )
+    finally:
+        shutil.rmtree(codex_home, ignore_errors=True)
 
     metadata["finished_at"] = _timestamp()
     (run_dir / "stdout.txt").write_text(stdout, encoding="utf-8")

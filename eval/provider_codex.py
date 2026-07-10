@@ -144,9 +144,15 @@ def run_provider(plugin_ref: str, repo_root: Path, model: str | None) -> int:
     run_dir = Path(os.environ["TIERS_RUN_DIR"])
     workspace = Path.cwd()
     codex_home = Path(os.environ["CODEX_HOME"])
+    source_codex_home = Path(os.environ.get("TIERS_SOURCE_CODEX_HOME", ""))
     fixture = load_fixture(fixture_path)
     plugin_root = run_dir / "plugin"
     materialize_plugin(repo_root, plugin_ref, plugin_root)
+
+    for name in ("config.toml", "auth.json"):
+        source = source_codex_home / name
+        if source.is_file():
+            shutil.copy2(source, codex_home / name)
 
     install = subprocess.run(
         [
