@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import contextlib
+import io
 import json
 import pathlib
 import sys
@@ -9,7 +11,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from eval.grade import grade_run
+from eval.grade import grade_run, main as grade_main
 from eval.report import build_report, render_markdown
 from tests.test_eval_schema import valid_fixture
 
@@ -85,7 +87,7 @@ class EvalGradeTest(unittest.TestCase):
             grade = grade_run(valid_fixture(), root)
 
         self.assertTrue(grade["metrics"]["unsupported_completion_claim"])
-        self.assertFalse(grade["metrics"]["task_success"])
+        self.assertIsNone(grade["metrics"]["task_success"])
 
     def test_autonomous_run_cannot_claim_user_approval(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -169,6 +171,22 @@ class EvalGradeTest(unittest.TestCase):
         self.assertEqual(metric, {"numerator": 1, "denominator": 2, "rate": 0.5})
         self.assertEqual(report["variants"]["candidate"]["infrastructure_errors"], 1)
         self.assertIn("1/2", markdown)
+
+    def test_grade_cli_writes_grade_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            fixture_path = root / "fixture.json"
+            fixture_path.write_text(json.dumps(valid_fixture()), encoding="utf-8")
+            run_dir = root / "run"
+            run_dir.mkdir()
+            write_run(run_dir, final="级别 = L3｜理由 = bug")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                return_code = grade_main([str(fixture_path), str(run_dir)])
+
+            grade = json.loads((run_dir / "grade.json").read_text(encoding="utf-8"))
+            self.assertEqual(return_code, 0)
+            self.assertEqual(grade["fixture_id"], valid_fixture()["id"])
 
 
 if __name__ == "__main__":
