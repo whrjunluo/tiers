@@ -8,11 +8,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 REPO="$PWD"
 if [ "${1:-}" = "--repo" ]; then REPO="$2"; shift 2; fi
 STATE="$REPO/docs/superpowers/.workflow-state.yaml"
-if STATE_GIT_DIR="$(git -C "$REPO" rev-parse --absolute-git-dir 2>/dev/null)"; then
-  STATE_LOCK="$STATE_GIT_DIR/tiers-workflow-state.lock"
-else
-  STATE_LOCK="$STATE.lock"
-fi
+STATE_LOCK_ROOT="${DEV_WORKFLOW_STATE_LOCK_ROOT:-${TMPDIR:-/tmp}/dev-workflow-state-${UID}}"
+STATE_LOCK_ID="$(printf '%s' "$STATE" | cksum | awk '{print $1 "-" $2}')"
+STATE_LOCK="$STATE_LOCK_ROOT/$STATE_LOCK_ID.lock"
 STATE_LOCK_TIMEOUT_SECONDS=5
 
 VALID_PHASES="brainstorm grill spec plan tdd review business-verify fidelity-verify done"

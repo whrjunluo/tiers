@@ -41,6 +41,18 @@ class EvalCatalogTest(unittest.TestCase):
             all(fixture["limits"]["max_continuations"] >= 2 for fixture in goal_cases)
         )
 
+    def test_smoke_gold_accepts_context_dependent_tiers(self):
+        fixtures = {
+            path.stem: load_fixture(path)
+            for path in (ROOT / "eval" / "fixtures").glob("*.json")
+        }
+        clarification = fixtures["clarify-ambiguous-product-choice"]["expected"]
+        self.assertEqual(set(clarification["allowed_tiers"]), {"L1", "L2"})
+
+        fidelity = fixtures["evidence-fail-plus-pass"]["expected"]
+        self.assertIn("L4", fidelity["allowed_tiers"])
+        self.assertNotIn("understanding", fidelity["required_gates"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -101,6 +101,19 @@ EMPTY="$ROOT/empty"
 mkdir -p "$EMPTY"
 bash "$WS" --repo "$EMPTY" check | grep -q "无续行状态" || fail "未初始化 check 应提示无续行状态"
 
+# Codex workspace-write sandboxes expose Git metadata read-only. State commands
+# must still work because their lock protects workflow data, not Git internals.
+READ_ONLY_GIT="$ROOT/read-only-git"
+mkdir -p "$READ_ONLY_GIT"
+git -C "$READ_ONLY_GIT" init -q
+git -C "$READ_ONLY_GIT" checkout -q -b feat/test-state
+chmod a-w "$READ_ONLY_GIT/.git"
+if ! bash "$WS" --repo "$READ_ONLY_GIT" init >/dev/null 2>&1; then
+  chmod u+w "$READ_ONLY_GIT/.git"
+  fail "只读 .git 时 workflow state 仍应可用"
+fi
+chmod u+w "$READ_ONLY_GIT/.git"
+
 # init migrates the pre-evidence schema without losing task progress.
 LEGACY="$ROOT/legacy"
 mkdir -p "$LEGACY/docs/superpowers"
