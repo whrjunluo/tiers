@@ -1,6 +1,6 @@
 ---
 name: dev-workflow
-description: Use when any development task appears, including new features, bug fixes, refactors, UI changes, implementation requests, code edits, or workflow-level choices. Automatically routes the task through L0 gstack, L1 SDD, L2 lightweight spec, L3 debugging, or L4 direct edit and executes the matching skill chain.
+description: Use when a development task could change code, behavior, configuration, UI, data flow, integration contracts, or workflow policy, including features, fixes, refactors, and delivery work.
 ---
 
 # 开发工作流路由与执行指南
@@ -88,7 +88,7 @@ description: Use when any development task appears, including new features, bug 
 - L4：默认跳过。
 
 provider 优先级：
-1. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，或 `external_agent.py --list` 显示 ≥2 个不同家族外部 CLI 可用，优先用 ≥2 个不同家族外部 CLI 做只读 review。高风险业务闭环任务必须先尝试此项；`external-partial`、认证失败、空产出或只剩同家族 provider 时只算二次意见，不算完整交叉评审。
+1. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，或 `external_agent.py --list` 显示 ≥2 个不同家族外部 CLI 候选，优先用 `external_agent.py --cross-review <a>,<b>` 做只读 review。调用前同时检查 `health_status`、`routing_priority` 与 `recommended_timeout_seconds`：优先 `routing_priority=normal` 的不同家族组合（通常 `grok` / `cursor` / `mimo`）；`antigravity` 标记为 `slow`/`degraded` 时降为后备，用户明确指定时仍按建议超时调用并报告状态。`external-ready` 只说明候选已安装；必须实际返回 ≥2 个不同家族的成功结果且 `quorum=true` 才算通过。高风险业务闭环任务必须先尝试此项；认证失败、空产出、部分失败或只剩同家族 provider 时只算二次意见，不算完整交叉评审。
 2. **平台子代理（platform-agents）**：仅当外部交叉评审不可用、用户明确要求平台子代理、或作为外部 review 之外的补充时使用。不同 reviewer 用不同审查角色，例如“回归风险 reviewer”和“安装/降级路径 reviewer”。平台子代理不能替代已触发的外部交叉评审。
 3. **平台多模型（multi-model）**：若平台允许指定模型，且用户明确允许多模型，给 reviewer 分配不同模型；不允许或不可用时，同模型不同 prompt 也可用。
 4. **内置对抗 checklist（built-in）**：没有任何 provider 时也必须可执行。检查：最可能的回归点、缺依赖/缺 MCP 降级路径、安装脚本是否静默改环境、README/skill/脚本承诺是否一致、测试是否覆盖失败路径。
@@ -98,6 +98,15 @@ provider 优先级：
 - 只读 review 默认不允许写文件。外部或子代理输出是证据，不是结论，主流程必须逐条裁决。
 - 若用户未授权平台子代理/外部 agent，则走内置 checklist，不阻塞交付；但高风险业务闭环任务必须在 final 里标明“外部交叉评审未完成”，不能写成已过完整对抗评审。
 - 收尾时必须展示采用的 provider、review 摘要、主流程裁决；若本应外部交叉评审但未完成，必须明确写出阻塞原因，禁止静默降级后声明“已完成”。
+
+完整交叉评审使用同一冻结输入并保存本地 JSON 证据。报告绑定当前 Git snapshot fingerprint，并且 `complete` 只接受 24 小时内、仍匹配当前仓库状态的 quorum：
+
+```bash
+python3 <plugin-root>/scripts/external_agent.py \
+  --cross-review agy,mimo --cd "$PWD" --context git --format json \
+  --PROMPT "只读审查当前改动，只报告有证据的问题" \
+  > docs/superpowers/.workflow-evidence/external-review.json
+```
 
 ---
 
@@ -174,7 +183,7 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 >
 > **未过此关不得标 done。** 自检红旗：当你准备说"对齐设计稿了 / 这个页面做完了"，但**本任务还没做整屏核对 + 逐元素 inspect**——立即停下，回到关卡。
 
-> 状态机（L1/L2 维护 workflow-state 时）：收尾前补一个 `fidelity-verify` 阶段标记，两步都过再 `set phase done`。见下方「跨 session 续行」。
+> 状态机（L1 或高风险 L2/L3）：收尾前进入 `fidelity-verify`，写入 `evidence.fidelity` 后再用 `workflow-state.sh complete`；禁止直接 `set phase done`。见下方「跨 session 续行」。
 
 ## 业务闭环验收关卡（L1/L2/L3 通用，收尾 HARD-GATE）
 
@@ -190,7 +199,7 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 >
 > 高风险业务闭环任务（auth、路由守卫、API 写入、订单、IM、处方、支付、权限）在完成前还必须跑 `codegraph-judge assess`；若 codegraph 不可用，只能记录“codegraph 降级为人工影响面审查”的证据，不能省略影响面审查。人工影响面审查至少要列：改动文件清单、每个文件影响、受影响业务 flow、测试缺口、为什么仍满足 L1/L2/L3 判级。
 >
-> 状态机（L0/L1 维护 workflow-state 时）：涉及业务闭环的任务收尾前必须 `set phase business-verify`，证据清单齐全后才允许 `set phase done`；若同时有设计稿，再按顺序进入 `fidelity-verify`。
+> 状态机（L1 及所有高风险业务 L2/L3 强制）：设置 `requirements.business=true` 与 `requirements.external_review=true`，收尾进入 `business-verify`；若同时有设计稿，再设置 `requirements.fidelity=true` 并进入 `fidelity-verify`。证据文件齐全后只能用 `workflow-state.sh complete` 完成，禁止直接 `set phase done`。
 
 ---
 
@@ -262,6 +271,7 @@ L4 微调不跑（风险≈0，白跑）。
 6. `requesting-code-review` skill（若可用）— 请求代码审查；随后按「对抗评审关卡」选择 provider。若 review skill 不可用，执行内置 review checklist：检查行为回归、缺失测试、安装/降级路径、文档承诺是否与实现一致。
 7. 若涉及业务闭环，按「业务闭环验收关卡」完成真实请求与守卫演练；缺证据不得标 done。
 8. `verification-before-completion` skill（若可用）— 验证功能符合 spec 后关闭任务。若不可用，执行内置 verification checklist：重跑相关测试、演练缺依赖场景、确认 README/skill/脚本口径一致。
+9. 写入本地证据文件及 `evidence.*` 字段，运行 `workflow-state.sh complete`；未通过完成门则保持当前 phase。
 
 > L0 的范围审视/架构验证阶段同样可以用 `grill-me` 追问设计；L2 只有轻量 spec，一般不必；L3/L4 无设计文档，跳过。
 
@@ -276,8 +286,9 @@ L4 微调不跑（风险≈0，白跑）。
 2. **理解度关卡（轻量，见上）** — 一句话自检：谁在消费这块 / 回归边界在哪 / 能写出覆盖测试吗？拿不准 → `codegraph-judge assess` 或读消费方；影响面超预期 → 回去重判级。
 3. `test-driven-development` skill（若可用）— 先写覆盖改动点的失败测试；若不可用，走内置 TDD 协议：先红、再绿、再清理。
 4. 实现，让测试通过
-5. （可选）`requesting-code-review` skill；命中对抗评审触发规则时按 provider 分层执行；不可用时用内置 review checklist
+5. `requesting-code-review` skill 可选；但一旦命中「对抗评审关卡」触发规则，评审本身强制执行，skill 不可用时按 provider 分层或内置 checklist 完成，禁止把“skill 可选”解释成“review 可选”
 6. 若涉及业务闭环，按「业务闭环验收关卡」完成真实请求与守卫演练；缺证据不得标 done
+7. 高风险业务 L2 维护 workflow-state，写入证据文件后运行 `workflow-state.sh complete`
 
 ---
 
@@ -291,7 +302,8 @@ L4 微调不跑（风险≈0，白跑）。
 3. 写一个能复现 bug 的失败测试（先红）
 4. 修复，让测试变绿
 5. 若修复涉及业务闭环，按「业务闭环验收关卡」补跑守卫、真实请求、错误态演练；缺证据不得标 done
-6. 确认没有引入新回归后提交
+6. 高风险业务 L3 维护 workflow-state，写入证据文件后运行 `workflow-state.sh complete`
+7. 确认没有引入新回归后提交
 
 ---
 
@@ -324,7 +336,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 
 - **搜集** → `--mode review`（只读）：联网→`grok`，啃大库→`antigravity`。
 - **执行** → `--mode delegate`（可写，需用户授权）：仓库内→`cursor`/`codex`，纯算法→`codex`，国内→`mimo`。
-- **交叉审核** → `--mode review`，同一产物丢给 **≥2 个不同家族** 的 agent（如 `codex`+`grok`+`antigravity`），主 Agent 汇总裁决。
+- **交叉审核** → `--cross-review <a>,<b>`，runner 冻结同一产物、计算 hash，并只在 **≥2 个不同家族成功返回**时输出 `quorum=true`；主 Agent 汇总裁决。
 - 派之前 `--list` 查可用性；`--SESSION_ID` 多轮续接。
 
 **纪律**：委派不降级流程——判级、理解度关卡、TDD、人工评审仍由本工作流主导；agent 产出是证据、不是免检的最终答案，必须过本级关卡校验。`--mode delegate`（可写）须用户授权、且只在 `--cd` 内。`--model` 非用户明确指定不要传。
@@ -355,9 +367,11 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 
 ## 跨 session 续行（脚本独占接口）
 
-让一个 L0/L1 任务跨多个对话不丢进度。**脚本独占接口（学 Comet comet-state.sh）。禁手改 YAML。**
+让 L0/L1 及高风险 L2/L3 任务跨多个对话不丢进度，并把“完成”变成机器可校验的证据门。**脚本独占接口（学 Comet comet-state.sh）。禁手改 YAML。**
 
-**状态文件：** 每个项目按需生成 `docs/superpowers/.workflow-state.yaml`（加进 `.gitignore`，属工作态、不进版本库）。仅 L0/L1 需要维护；L2–L4 太短，可跳过。
+**状态文件：** 每个项目按需生成 `docs/superpowers/.workflow-state.yaml`（自动加入 `.gitignore`）。L0/L1 必须维护；auth / route guard / API integration / order / IM / prescription / payment / 数据写入 / 权限等高风险 L2/L3 也必须维护。其他短 L2–L4 可跳过。
+
+**证据目录：** `docs/superpowers/.workflow-evidence/`（自动加入 `.gitignore`）。所有 `evidence.*` 必须使用该目录内的仓库相对路径，绝对路径与 `..` 会被完成门拒绝。只存测试输出、Network 方法/URL/状态码摘要、codegraph 报告、评审 JSON 和残余风险；禁止写 token、密码、完整敏感 payload。最低格式：tests 含 `command:` + `exit_code: 0`，business/fidelity 含 `result:`，requests 含 `method:` + `url:` + 三位 `status:`，codegraph 含 `result:` 或 `degraded:`，residual_risks 含 `risk:`。
 
 **格式**（字段结构刻意设计成将来脚本可直接接管）：
 
@@ -365,19 +379,43 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 task: 一句话描述当前需求
 level: L1
 phase: spec          # brainstorm | grill | spec | plan | tdd | review | business-verify | fidelity-verify | done
+context:
+  repo: /auto-filled/repo
+  branch: feat/example
+  target: /login + route guard
+  sources: OpenAPI + acceptance criteria
+  environment: real # real | mock | n/a
+  delivery: local-only
+requirements:
+  business: true
+  fidelity: false
+  external_review: true
 artifacts:
   spec: docs/superpowers/specs/YYYY-MM-DD-xxx-design.md
   plan: ""
+evidence:
+  tests: docs/superpowers/.workflow-evidence/tests.txt
+  business: docs/superpowers/.workflow-evidence/business.txt
+  requests: docs/superpowers/.workflow-evidence/network.txt
+  codegraph: docs/superpowers/.workflow-evidence/codegraph.txt
+  external_review: docs/superpowers/.workflow-evidence/external-review.json
+  fidelity: ""
+  residual_risks: docs/superpowers/.workflow-evidence/risks.txt
+completion:             # script-owned; do not set manually
+  completed_at: ""
+  repository_fingerprint: ""
+  requirements_sha256: ""
 updated: YYYY-MM-DD
 next: 下一步具体该做什么
 ```
 
 **维护约定：**
-1. **开工时**：跑 `<plugin-root>/scripts/workflow-state.sh check`。如果输出「无续行状态」，直接继续判级；如果已有状态，再 `get phase` / `get task` / `get next`。若 phase != done 且非空，提示续行：「检测到未完成的 {level} 任务【{task}】，停在 {phase}，下一步 {next}。继续，还是换新任务？」
-2. **定级后**：跑 `workflow-state.sh init`（首次创建），再 `set task/level/phase`。
+1. **开工时**：跑 `<plugin-root>/scripts/workflow-state.sh check`。如果输出「无续行状态」，直接继续判级；如果已有状态，再 `get phase` / `get task` / `get next`。若 phase != done 且非空，提示续行：「检测到未完成的 {level} 任务【{task}】，停在 {phase}，下一步 {next}。继续，还是换新任务？」若已 done，状态不可再 `set` 或重复 `complete`；用 `workflow-state.sh start <task> <level>` 显式开始下一任务。
+2. **定级后**：L0/L1 或高风险 L2/L3 跑 `workflow-state.sh init`（旧 schema 会自动迁移，repo/branch 自动填充），再设置 task、level、phase、context.target、context.sources、context.environment、context.delivery。
    > L1 阶段流转：`brainstorm` →（理解度关卡）→ 理解不足则 `set phase grill`、收敛后再 `set phase spec`；自评足够且用户点头可直接 `set phase spec`。禁止 brainstorm 不经关卡判定直接跳 spec。
-3. **每过一个阶段**：`set phase/next`，有 spec/plan 则 `set artifacts.spec/artifacts.plan`。
-4. **收尾（仅 L0/L1）**：若本任务涉及业务闭环，先 `set phase business-verify`，过「业务闭环验收关卡」后才可继续；若本任务产出可见 UI 且有设计稿，再 `set phase fidelity-verify`，过「设计保真验收关卡」两步后再 `set phase done`；无对应 gate 才能直接 `set phase done`。脚本自动更新 `updated`。
+3. **声明关卡**：业务闭环设置 `requirements.business=true`，脚本会强制同时满足 `requirements.external_review=true`；其他触发外部评审的任务也设置 `requirements.external_review=true`；设计保真设置 `requirements.fidelity=true`。
+4. **每过一个阶段**：`set phase/next`，有 spec/plan 则设置 artifacts；每项验收先按上述最低格式写进本地证据目录，再 `set evidence.<field> <path>`。
+5. **收尾**：普通任务停在 `review`，业务任务停在 `business-verify`，设计任务停在 `fidelity-verify`。运行 `<plugin-root>/scripts/workflow-state.sh complete`；脚本验证上下文、证据格式、真实业务环境，以及当前仓库 24 小时内的双家族 quorum 后，写入 repository fingerprint 与 `requirements_sha256` seal 再进入 `done`。sealed 状态不可修改，requirements 手工降级或 phase 解封会使 `check` 失败；后续仓库继续开发或自然超过 24 小时不会推翻历史完成。`set phase done` 永远拒绝。
 
 ---
 

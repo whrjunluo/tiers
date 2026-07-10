@@ -1,8 +1,31 @@
 task: ""
 level: ""
 phase: ""        # brainstorm | grill | spec | plan | tdd | review | business-verify | fidelity-verify | done
+context:
+  repo: ""
+  branch: ""
+  target: ""
+  sources: ""
+  environment: "" # real | mock | n/a
+  delivery: ""
+requirements:
+  business: false
+  fidelity: false
+  external_review: false
 artifacts:
   spec: ""
   plan: ""
+evidence:
+  tests: ""
+  business: ""
+  requests: ""
+  codegraph: ""
+  external_review: ""
+  fidelity: ""
+  residual_risks: ""
+completion:
+  completed_at: ""
+  repository_fingerprint: ""
+  requirements_sha256: ""
 updated: ""
 next: ""
