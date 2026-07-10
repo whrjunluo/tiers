@@ -177,6 +177,32 @@ UNDERSTANDING_L4="$(new_repo understanding-l4)"
 setf "$UNDERSTANDING_L4" level L4
 [ "$(getf "$UNDERSTANDING_L4" understanding.status)" = not-required ] || fail "L4 应自动豁免 understanding"
 
+# Execution phases are hard-gated by current scope and evidence hashes.
+GATED="$(understanding_repo understanding-gated L2)"
+expect_fail "pending understanding 不得进入 tdd" bash "$WS" --repo "$GATED" set phase tdd
+gated_evidence="$(evidence "$GATED" understanding.txt $'result: PASS\nkind: impact\naffected: state consumers\ntests: workflow-state suite')"
+bash "$WS" --repo "$GATED" understand "$gated_evidence" >/dev/null
+setf "$GATED" phase tdd
+setf "$GATED" context.target scripts/other.sh
+expect_fail "scope 变化后不得进入 review" bash "$WS" --repo "$GATED" set phase review
+setf "$GATED" context.target scripts/workflow-state.sh
+setf "$GATED" requirements.fidelity true
+expect_fail "requirements 变化后不得进入 review" bash "$WS" --repo "$GATED" set phase review
+
+GATED_EVIDENCE="$(understanding_repo understanding-evidence-change L3)"
+gated_changed_path="$(evidence "$GATED_EVIDENCE" understanding.txt $'result: PASS\nkind: root-cause\nreproduction: stable failure\nroot_cause: parser strips comments')"
+bash "$WS" --repo "$GATED_EVIDENCE" understand "$gated_changed_path" >/dev/null
+printf '%s\n' $'result: PASS\nkind: root-cause\nreproduction: stable failure\nroot_cause: different hypothesis' > "$GATED_EVIDENCE/$gated_changed_path"
+expect_fail "understanding evidence 被替换后不得进入 tdd" bash "$WS" --repo "$GATED_EVIDENCE" set phase tdd
+
+GATED_TAMPER="$(understanding_repo understanding-tamper L2)"
+python3 - "$GATED_TAMPER/docs/superpowers/.workflow-state.yaml" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().replace("status: pending", "status: passed", 1), encoding="utf-8")
+PY
+expect_fail "只手改 understanding.status 不得进入 tdd" bash "$WS" --repo "$GATED_TAMPER" set phase tdd
+
 # check: illegal phase should error
 expect_fail "非法 phase 应拒绝" bash "$WS" --repo "$REPO" set phase 乱写
 
@@ -187,11 +213,13 @@ expect_fail "set phase done 应拒绝" bash "$WS" --repo "$REPO" set phase done
 STANDARD="$(new_repo standard)"
 setf "$STANDARD" task standard-change
 setf "$STANDARD" level L2
-setf "$STANDARD" phase review
 setf "$STANDARD" context.target scripts/workflow-state.sh
 setf "$STANDARD" context.sources user-request
 setf "$STANDARD" context.environment n/a
 setf "$STANDARD" context.delivery local-only
+standard_understanding="$(evidence "$STANDARD" understanding.txt $'result: PASS\nkind: impact\naffected: workflow completion\ntests: workflow-state suite')"
+bash "$WS" --repo "$STANDARD" understand "$standard_understanding" >/dev/null
+setf "$STANDARD" phase review
 setf "$STANDARD" evidence.tests "$(evidence "$STANDARD" tests.txt $'command: bash tests/workflow-state.sh\nexit_code: 0')"
 expect_fail "缺 residual risk 证据不得完成" bash "$WS" --repo "$STANDARD" complete
 setf "$STANDARD" evidence.residual_risks "$(evidence "$STANDARD" risks-placeholder.txt 'risk: done')"
@@ -210,12 +238,14 @@ bash "$WS" --repo "$STANDARD" start next-standard L2 >/dev/null
 BUSINESS="$(new_repo business)"
 setf "$BUSINESS" task auth-closeout
 setf "$BUSINESS" level L2
-setf "$BUSINESS" phase business-verify
 setf "$BUSINESS" context.target /login
 setf "$BUSINESS" context.sources openapi-and-acceptance
 setf "$BUSINESS" context.environment mock
 setf "$BUSINESS" context.delivery local-only
 setf "$BUSINESS" requirements.business true
+business_understanding="$(evidence "$BUSINESS" understanding.txt $'result: PASS\nkind: impact\naffected: auth guards and requests\ntests: business and request evidence')"
+bash "$WS" --repo "$BUSINESS" understand "$business_understanding" >/dev/null
+setf "$BUSINESS" phase business-verify
 setf "$BUSINESS" evidence.tests "$(evidence "$BUSINESS" tests.txt $'command: pnpm typecheck && pnpm test\nexit_code: 0')"
 setf "$BUSINESS" evidence.business "$(evidence "$BUSINESS" business.txt $'result: PASS\nguards: logged-out, logged-in, deep-link, 401')"
 setf "$BUSINESS" evidence.requests "$(evidence "$BUSINESS" requests.txt $'result: PASS\nmethod: POST\nurl: /auth/login\nstatus: 200')"
@@ -225,6 +255,7 @@ expect_fail "mock 业务环境不得完成" bash "$WS" --repo "$BUSINESS" comple
 setf "$BUSINESS" context.environment real
 expect_fail "业务闭环必须强制 external_review=true" bash "$WS" --repo "$BUSINESS" complete
 setf "$BUSINESS" requirements.external_review true
+bash "$WS" --repo "$BUSINESS" understand "$business_understanding" >/dev/null
 setf "$BUSINESS" evidence.external_review ""
 expect_fail "缺外部评审证据不得完成" bash "$WS" --repo "$BUSINESS" complete
 setf "$BUSINESS" evidence.external_review "$(evidence "$BUSINESS" invalid-review.json not-json)"
@@ -287,12 +318,14 @@ expect_fail "requirements 手工降级不得通过 seal 校验" bash "$WS" --rep
 FIDELITY="$(new_repo fidelity)"
 setf "$FIDELITY" task visual-alignment
 setf "$FIDELITY" level L1
-setf "$FIDELITY" phase fidelity-verify
 setf "$FIDELITY" context.target /consultation
 setf "$FIDELITY" context.sources figma-node
 setf "$FIDELITY" context.environment real
 setf "$FIDELITY" context.delivery local-only
 setf "$FIDELITY" requirements.fidelity true
+fidelity_understanding="$(evidence "$FIDELITY" understanding.txt $'result: PASS\nkind: requirements\nacceptance: match design measurements\nnon_goals: redesign')"
+bash "$WS" --repo "$FIDELITY" understand "$fidelity_understanding" >/dev/null
+setf "$FIDELITY" phase fidelity-verify
 setf "$FIDELITY" evidence.tests "$(evidence "$FIDELITY" tests.txt $'command: visual tests\nexit_code: 0')"
 setf "$FIDELITY" evidence.residual_risks "$(evidence "$FIDELITY" risks.txt 'risk: none')"
 expect_fail "缺 fidelity 证据不得完成" bash "$WS" --repo "$FIDELITY" complete
