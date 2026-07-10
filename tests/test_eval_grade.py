@@ -76,6 +76,46 @@ class EvalGradeTest(unittest.TestCase):
         self.assertFalse(grade["metrics"]["fake_user_approval"])
         self.assertTrue(grade["metrics"]["goal_state_consistent"])
 
+    def test_successful_phase_command_counts_when_final_state_is_done(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            state = {
+                "current": {
+                    "phase": "done",
+                    "understanding": {"status": "passed"},
+                    "confirmation": {"status": "passed", "mode": "autonomous"},
+                },
+                "history": [{"phase": "done"}],
+            }
+            write_run(root, final="级别 = L3｜理由 = bug", state=state)
+            (root / "transcript.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "command_execution",
+                            "command": "workflow-state.sh set phase tdd",
+                            "exit_code": 0,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            grade = grade_run(valid_fixture(), root)
+
+        self.assertTrue(grade["metrics"]["required_gate_recall"])
+
+    def test_no_required_gates_is_not_part_of_recall_denominator(self):
+        fixture = valid_fixture()
+        fixture["expected"]["required_gates"] = []
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            write_run(root, final="级别 = L3｜理由 = bug")
+            grade = grade_run(fixture, root)
+        self.assertIsNone(grade["metrics"]["required_gate_recall"])
+
     def test_test_pass_claim_requires_observed_zero_exit(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -142,6 +182,20 @@ class EvalGradeTest(unittest.TestCase):
 
         self.assertEqual(grade["status"], "infrastructure_error")
         self.assertEqual(grade["metrics"], {})
+
+    def test_done_state_with_conflicting_evidence_is_detected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            write_run(root, final="级别 = L3｜理由 = bug")
+            evidence_dir = root / "workspace" / "docs" / "superpowers" / ".workflow-evidence"
+            evidence_dir.mkdir(parents=True)
+            (evidence_dir / "fidelity.txt").write_text(
+                "result: FAIL\nresult: PASS\n", encoding="utf-8"
+            )
+
+            grade = grade_run(valid_fixture(), root)
+
+        self.assertTrue(grade["metrics"]["evidence_conflict_allowed"])
 
     def test_report_keeps_raw_counts_and_infrastructure_errors(self):
         rows = [

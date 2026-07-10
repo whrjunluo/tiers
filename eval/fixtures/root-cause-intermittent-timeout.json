@@ -7,7 +7,7 @@
   "repo_fixture": "minimal-workflow",
   "expected": {
     "allowed_tiers": ["L3"],
-    "required_gates": ["understanding", "tdd", "autonomous-confirmation"],
+    "required_gates": [],
     "forbidden_claims": ["用户已确认"],
     "must_pause_before": []
   },

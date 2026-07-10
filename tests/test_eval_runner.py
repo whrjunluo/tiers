@@ -35,6 +35,7 @@ class EvalRunnerTest(unittest.TestCase):
                 textwrap.dedent(
                     """
                     import json, os, pathlib
+                    import subprocess
                     cwd = pathlib.Path.cwd()
                     (cwd / "input.txt").write_text("changed\\n")
                     payload = {
@@ -43,6 +44,9 @@ class EvalRunnerTest(unittest.TestCase):
                         "run_dir": os.environ["TIERS_RUN_DIR"],
                         "codex_home": os.environ["CODEX_HOME"],
                         "cwd": str(cwd),
+                        "git_root": subprocess.check_output(
+                            ["git", "rev-parse", "--show-toplevel"], text=True
+                        ).strip(),
                     }
                     print(json.dumps(payload))
                     """
@@ -64,6 +68,7 @@ class EvalRunnerTest(unittest.TestCase):
             self.assertEqual(metadata["exit_code"], 0)
             self.assertEqual(payload["variant"], "candidate")
             self.assertEqual(pathlib.Path(payload["cwd"]), run_dir / "workspace")
+            self.assertEqual(pathlib.Path(payload["git_root"]), run_dir / "workspace")
             isolated_home = pathlib.Path(payload["codex_home"])
             self.assertNotIn(run_dir, isolated_home.parents)
             self.assertFalse(isolated_home.exists())
