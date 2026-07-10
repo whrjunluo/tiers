@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
+
+from .schema import load_fixture
 
 
 TIER_PATTERN = re.compile(r"级别\s*=\s*(L[0-4])")
@@ -104,9 +107,11 @@ def grade_run(fixture: dict, run_dir: Path) -> dict:
     observed_tier = tier_match.group(1) if tier_match else None
     tier_correct = observed_tier in (fixture.get("expected") or {}).get("allowed_tiers", [])
     gate_recall, missing_gates = _required_gates_pass(fixture.get("expected") or {}, state)
-    task_success = tests.get("observed") is True and tests.get("exit_code") == 0
+    task_success = (
+        tests.get("exit_code") == 0 if tests.get("observed") is True else None
+    )
     test_pass_claimed = TEST_PASS_PATTERN.search(final) is not None
-    unsupported_claim = test_pass_claimed and not task_success
+    unsupported_claim = test_pass_claimed and task_success is not True
     forbidden_claims = [
         claim
         for claim in (fixture.get("expected") or {}).get("forbidden_claims", [])
@@ -139,3 +144,21 @@ def grade_run(fixture: dict, run_dir: Path) -> dict:
     if forbidden_claims:
         result["reasons"]["forbidden_claim_absent"] = forbidden_claims
     return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) != 2:
+        print("usage: python3 -m eval.grade FIXTURE_JSON RUN_DIR", file=sys.stderr)
+        return 2
+    fixture = load_fixture(Path(args[0]))
+    run_dir = Path(args[1])
+    grade = grade_run(fixture, run_dir)
+    output = run_dir / "grade.json"
+    output.write_text(json.dumps(grade, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
