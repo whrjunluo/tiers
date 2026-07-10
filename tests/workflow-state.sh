@@ -203,6 +203,33 @@ path.write_text(path.read_text().replace("status: pending", "status: passed", 1)
 PY
 expect_fail "只手改 understanding.status 不得进入 tdd" bash "$WS" --repo "$GATED_TAMPER" set phase tdd
 
+# Goal lifecycle stores only an objective digest and reuses valid checkpoints.
+GOAL_REPO="$(understanding_repo goal-lifecycle L2)"
+goal_objective="Implement private objective #123"
+bash "$WS" --repo "$GOAL_REPO" goal "$goal_objective" >/dev/null
+[ "$(getf "$GOAL_REPO" execution.mode)" = goal ] || fail "goal 命令应切换 execution.mode"
+goal_hash="$(getf "$GOAL_REPO" execution.objective_sha256)"
+printf '%s\n' "$goal_hash" | grep -qE '^[0-9a-f]{64}$' || fail "Goal objective hash 缺失"
+[ "$(getf "$GOAL_REPO" execution.continuation)" = 0 ] || fail "首次 Goal continuation 应为 0"
+if grep -qF "$goal_objective" "$GOAL_REPO/docs/superpowers/.workflow-state.yaml"; then fail "Goal 原文不得落盘"; fi
+[ "$(getf "$GOAL_REPO" understanding.status)" = pending ] || fail "进入 Goal 应重置 understanding"
+goal_understanding="$(evidence "$GOAL_REPO" understanding.txt $'result: PASS\nkind: impact\naffected: goal state\ntests: continuation suite')"
+bash "$WS" --repo "$GOAL_REPO" understand "$goal_understanding" >/dev/null
+setf "$GOAL_REPO" execution.checkpoint "tests pending #2"
+bash "$WS" --repo "$GOAL_REPO" continue-goal "$goal_objective" >/dev/null
+[ "$(getf "$GOAL_REPO" execution.continuation)" = 1 ] || fail "同目标续行应递增 continuation"
+[ "$(getf "$GOAL_REPO" execution.checkpoint)" = "tests pending #2" ] || fail "同目标续行应保留 checkpoint"
+[ "$(getf "$GOAL_REPO" understanding.status)" = passed ] || fail "同目标续行应复用 understanding"
+[ "$(getf "$GOAL_REPO" execution.objective_sha256)" = "$goal_hash" ] || fail "同目标 hash 不应变化"
+bash "$WS" --repo "$GOAL_REPO" continue-goal "Deploy objective" >/dev/null
+[ "$(getf "$GOAL_REPO" execution.continuation)" = 2 ] || fail "目标变化仍应记录 continuation"
+[ "$(getf "$GOAL_REPO" execution.checkpoint)" = "" ] || fail "目标变化应清空 checkpoint"
+[ "$(getf "$GOAL_REPO" understanding.status)" = pending ] || fail "目标变化应重置 understanding"
+[ "$(getf "$GOAL_REPO" execution.objective_sha256)" != "$goal_hash" ] || fail "目标变化应更新 objective hash"
+
+SINGLE_CONTINUE="$(new_repo single-continue)"
+expect_fail "single mode 不得 continue-goal" bash "$WS" --repo "$SINGLE_CONTINUE" continue-goal "not active"
+
 # check: illegal phase should error
 expect_fail "非法 phase 应拒绝" bash "$WS" --repo "$REPO" set phase 乱写
 
@@ -339,6 +366,11 @@ SKILL="$HERE/skills/dev-workflow/SKILL.md"
 grep -q 'workflow-state.sh.*complete' "$SKILL" || fail "dev-workflow 应要求 complete 完成门"
 grep -q 'start <task> <level>' "$SKILL" || fail "dev-workflow 应说明 sealed 后的新任务入口"
 grep -q 'requirements_sha256' "$SKILL" || fail "dev-workflow 应说明 requirements seal"
+grep -q '理解度 = PASS' "$SKILL" || fail "dev-workflow 应声明可见理解度输出"
+grep -q '目标续行 = 第' "$SKILL" || fail "dev-workflow 应声明 Goal 续行输出"
+grep -q 'continue-goal' "$SKILL" || fail "dev-workflow 应说明 Goal 续行命令"
+grep -q '不得.*创建 Goal' "$SKILL" || fail "dev-workflow 应禁止自行创建 Goal"
+grep -q 'objective.*变化.*pending' "$SKILL" || fail "dev-workflow 应说明目标变化使理解度失效"
 if grep -q '仅 L0/L1 需要维护' "$SKILL"; then fail "高风险 L2/L3 不得跳过状态机"; fi
 if grep -q 'L2–L4 太短，可跳过' "$SKILL"; then fail "高风险 L2/L3 不得被短任务豁免"; fi
 echo "PASS tests/workflow-state.sh"

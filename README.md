@@ -181,12 +181,16 @@ python3 <plugin-root>/scripts/external_agent.py --cross-review agy,mimo \
 <plugin-root>/scripts/workflow-state.sh check     # 正确
 <plugin-root>/scripts/workflow-state.sh complete  # 证据齐全后唯一合法的 done 入口
 <plugin-root>/scripts/workflow-state.sh start <task> <level>  # sealed 后开始下一任务
+<plugin-root>/scripts/workflow-state.sh goal "<objective>"  # 仅接管用户已设置的 Goal
+<plugin-root>/scripts/workflow-state.sh continue-goal "<objective>"  # 自动续行
 <plugin-root>/skills/dev-workflow/scripts/...      # 错误，此路径不存在
 ```
 
 `workflow-state.sh check` 在新项目没有状态文件时会输出「无续行状态」并正常退出。`complete` 通过后会写入完成时间、repository fingerprint 和 requirements hash；sealed 状态不可再 `set` 或重复完成，必须用 `start` 开下一任务。后续仓库继续开发不会使历史 done 状态失效。
 
 业务、请求与保真证据的 `result:` 必须有且仅有一行，内容为 `result: PASS`；仅有非空结果、写入失败结果或同时写入冲突结果都不会通过完成门。请求证据另外记录 `method:`、`url:` 和三位 `status:`，状态码按被验证路径的预期填写，不限定为 2xx。
+
+L0–L3 在进入执行 phase 前还必须通过 `understand`：L0 提交架构边界/迁移/回滚证据，L1 提交需求验收/非目标，L2 提交影响面/测试边界，L3 提交稳定复现/根因。状态保存 scope 与 evidence SHA-256，手改 `status` 或替换证据不能绕过。Goal 模式只接管用户已创建的目标；objective 原文不落盘，相同目标续行复用有效理解度，目标变化会重置为 `pending`。
 
 ## 分级速查
 

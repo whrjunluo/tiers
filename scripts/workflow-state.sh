@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
-# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|understand <evidence>|get <field>|set <field> <value>|check|complete}
+# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|get <field>|set <field> <value>|check|complete}
 set -euo pipefail
 # 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -15,7 +15,7 @@ VALID_BOOLEANS="true false"
 VALID_ENVIRONMENTS="real mock n/a"
 VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
 VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
-VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
+VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.checkpoint requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
 
 die(){ echo "✗ $1" >&2; exit 1; }
 in_list(){ printf '%s\n' $2 | grep -qxF "$1"; }
@@ -210,6 +210,10 @@ import hashlib, sys
 with open(sys.argv[1], "rb") as handle:
     print(hashlib.sha256(handle.read()).hexdigest())
 PY
+}
+
+text_sha256(){
+  printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
 understanding_kind_for_level(){
@@ -548,6 +552,40 @@ case "${1:-}" in
     write_field execution.base_revision "$base_revision"
     if [ "$task_level" = L4 ]; then reset_understanding not-required; fi
     echo "✓ 新任务已开始（task=${task_name}, level=${task_level}, phase=brainstorm）" ;;
+  goal)
+    [ -f "$STATE" ] || die "状态文件不存在，先 init"
+    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] goal <objective>"
+    sealed_at="$(yget completion.completed_at)"
+    is_empty_value "$sealed_at" || die "任务已封存；请先 start 新任务"
+    [ "$(yget execution.mode)" != goal ] || die "Goal 已初始化；请使用 continue-goal"
+    [ -n "$2" ] || die "Goal objective 不能为空"
+    write_field execution.mode goal
+    write_field execution.objective_sha256 "$(text_sha256 "$2")"
+    write_field execution.continuation 0
+    write_field execution.checkpoint ""
+    if [ "$(yget level)" = L4 ]; then reset_understanding not-required; else reset_understanding pending; fi
+    echo "✓ Goal 已初始化（continuation=0，understanding=$(yget understanding.status)）" ;;
+  continue-goal)
+    [ -f "$STATE" ] || die "状态文件不存在，先 init"
+    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] continue-goal <objective>"
+    sealed_at="$(yget completion.completed_at)"
+    is_empty_value "$sealed_at" || die "任务已封存；不得续行"
+    [ "$(yget execution.mode)" = goal ] || die "当前不是 Goal mode；先使用 goal <objective>"
+    [ -n "$2" ] || die "Goal objective 不能为空"
+    previous_hash="$(yget execution.objective_sha256)"
+    current_hash="$(text_sha256 "$2")"
+    continuation="$(yget execution.continuation)"
+    printf '%s\n' "$continuation" | grep -qE '^[0-9]+$' || die "execution.continuation 非法: $continuation"
+    write_field execution.continuation "$((continuation + 1))"
+    if [ "$previous_hash" = "$current_hash" ]; then
+      reuse="$(yget understanding.status)"
+    else
+      write_field execution.objective_sha256 "$current_hash"
+      write_field execution.checkpoint ""
+      if [ "$(yget level)" = L4 ]; then reset_understanding not-required; else reset_understanding pending; fi
+      reuse="$(yget understanding.status)"
+    fi
+    echo "✓ 目标续行 = 第 $(yget execution.continuation) 次｜phase = $(yget phase)｜理解度 = $reuse" ;;
   understand)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] understand <evidence>"
@@ -628,6 +666,8 @@ case "${1:-}" in
     ph="$(yget phase)"; is_empty_value "$ph" || in_list "$ph" "$VALID_PHASES" || die "phase 非法: $ph"
     lv="$(yget level)"; is_empty_value "$lv" || in_list "$lv" "$VALID_LEVELS" || die "level 非法: $lv"
     env="$(yget context.environment)"; is_empty_value "$env" || in_list "$env" "$VALID_ENVIRONMENTS" || die "context.environment 非法: $env"
+    execution_mode="$(yget execution.mode)"; is_empty_value "$execution_mode" || in_list "$execution_mode" "single goal" || die "execution.mode 非法: $execution_mode"
+    continuation="$(yget execution.continuation)"; printf '%s\n' "$continuation" | grep -qE '^[0-9]+$' || die "execution.continuation 非法: $continuation"
     for field in requirements.business requirements.fidelity requirements.external_review; do
       value="$(yget "$field")"
       is_empty_value "$value" || in_list "$value" "$VALID_BOOLEANS" || die "$field 非法: $value"
@@ -647,5 +687,5 @@ case "${1:-}" in
     fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
-  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|understand <evidence>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
+  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
 esac
