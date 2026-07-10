@@ -160,12 +160,14 @@ ensure_schema(){
   append_template_section requirements
   append_template_section evidence
   append_template_section completion
-  if is_empty_value "$workflow_version"; then
-    if is_empty_value "$sealed_at"; then
+  if is_empty_value "$sealed_at"; then
+    if is_empty_value "$workflow_version"; then
       ensure_nested_field completion workflow_version 2
-    else
-      ensure_nested_field completion workflow_version 1
+    elif [ "$workflow_version" != 2 ]; then
+      write_field completion.workflow_version 2
     fi
+  elif is_empty_value "$workflow_version"; then
+    ensure_nested_field completion workflow_version 1
   fi
   ensure_nested_field completion requirements_sha256 '""'
 }
@@ -207,7 +209,21 @@ require_value(){
 
 evidence_path(){
   local value="$1"
-  printf '%s/%s\n' "$REPO" "$value"
+  python3 - "$REPO" "$value" <<'PY'
+from pathlib import Path
+import sys
+
+repo = Path(sys.argv[1]).resolve()
+root = (repo / "docs/superpowers/.workflow-evidence").resolve()
+candidate = (repo / sys.argv[2]).resolve()
+
+def within(child, parent):
+    return child == parent or parent in child.parents
+
+if not within(root, repo) or candidate == root or not within(candidate, root):
+    raise SystemExit(1)
+print(candidate)
+PY
 }
 
 valid_evidence_reference(){
@@ -355,7 +371,10 @@ require_evidence_file(){
     add_error "$field 必须位于 docs/superpowers/.workflow-evidence/ 且不得包含 ..: $value"
     return
   fi
-  path="$(evidence_path "$value")"
+  if ! path="$(evidence_path "$value")"; then
+    add_error "$field 证据真实路径越过仓库边界: $value"
+    return
+  fi
   if [ ! -s "$path" ]; then
     add_error "$field 证据文件不存在或为空: $value"
     return
@@ -374,7 +393,10 @@ validate_external_review(){
     add_error "evidence.external_review 必须位于 docs/superpowers/.workflow-evidence/ 且不得包含 ..: $value"
     return
   fi
-  path="$(evidence_path "$value")"
+  if ! path="$(evidence_path "$value")"; then
+    add_error "evidence.external_review 真实路径越过仓库边界: $value"
+    return
+  fi
   if [ ! -s "$path" ]; then
     add_error "evidence.external_review 证据文件不存在或为空: $value"
     return
@@ -476,7 +498,10 @@ validate_understanding_gate(){
     add_error "understanding.evidence 引用非法: ${value:-空}"
     return
   fi
-  path="$(evidence_path "$value")"
+  if ! path="$(evidence_path "$value")"; then
+    add_error "understanding.evidence 真实路径越过仓库边界: $value"
+    return
+  fi
   if [ ! -s "$path" ]; then
     add_error "understanding.evidence 不存在或为空: $value"
     return
@@ -506,7 +531,10 @@ validate_confirmation_gate(){
     add_error "confirmation.evidence 引用非法: ${value:-空}"
     return
   fi
-  path="$(evidence_path "$value")"
+  if ! path="$(evidence_path "$value")"; then
+    add_error "confirmation.evidence 真实路径越过仓库边界: $value"
+    return
+  fi
   if [ ! -s "$path" ]; then
     add_error "confirmation.evidence 不存在或为空: $value"
     return
@@ -581,6 +609,10 @@ validate_completion(){
 }
 
 acquire_state_lock
+
+if [ -f "$STATE" ] && [ "${1:-}" != init ]; then
+  ensure_schema
+fi
 
 case "${1:-}" in
   init)
@@ -677,8 +709,9 @@ case "${1:-}" in
     if ! valid_evidence_reference "$value"; then
       add_error "understanding evidence 必须位于 docs/superpowers/.workflow-evidence/ 且不得包含 ..: $value"
     else
-      path="$(evidence_path "$value")"
-      if [ ! -s "$path" ]; then
+      if ! path="$(evidence_path "$value")"; then
+        add_error "understanding evidence 真实路径越过仓库边界: $value"
+      elif [ ! -s "$path" ]; then
         add_error "understanding evidence 不存在或为空: $value"
       else
         validate_understanding_evidence "$level" "$path"
@@ -704,7 +737,7 @@ case "${1:-}" in
     [ -z "$errors" ] || die "自治确认前理解度无效: $errors"
     value="$2"
     valid_evidence_reference "$value" || die "confirmation evidence 必须位于 docs/superpowers/.workflow-evidence/ 且不得包含 ..: $value"
-    path="$(evidence_path "$value")"
+    path="$(evidence_path "$value")" || die "confirmation evidence 真实路径越过仓库边界: $value"
     [ -s "$path" ] || die "confirmation evidence 不存在或为空: $value"
     scope="$(yget understanding.scope_sha256)"
     if ! output="$(python3 "$PLUGIN_ROOT/scripts/confirmation_contract.py" --validate "$path" --scope "$scope" 2>&1)"; then

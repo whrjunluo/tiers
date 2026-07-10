@@ -134,6 +134,15 @@ bash "$WS" --repo "$LEGACY" init >/dev/null
 [ "$(getf "$LEGACY" understanding.status)" = pending ] || fail "未完成旧任务应迁移为 pending understanding"
 [ "$(getf "$LEGACY" completion.workflow_version)" = 2 ] || fail "未完成旧任务应升级为 workflow v2"
 
+# An unsealed state cannot opt back into the gate-free v1 contract.
+python3 - "$LEGACY/docs/superpowers/.workflow-state.yaml" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().replace('workflow_version: 2', 'workflow_version: 1'), encoding='utf-8')
+PY
+expect_fail "未封存 workflow v1 不得绕过执行硬门" bash "$WS" --repo "$LEGACY" check
+[ "$(getf "$LEGACY" completion.workflow_version)" = 2 ] || fail "未封存 workflow v1 应自动升级为 v2"
+
 # Already sealed legacy tasks remain historical v1 instead of gaining fabricated gates.
 LEGACY_SEALED="$ROOT/legacy-sealed"
 mkdir -p "$LEGACY_SEALED/docs/superpowers"
@@ -160,6 +169,18 @@ f="$REPO/docs/superpowers/.workflow-state.yaml"
 [ "$(getf "$REPO" understanding.status)" = pending ] || fail "新状态应默认 pending understanding"
 [ "$(getf "$REPO" confirmation.status)" = pending ] || fail "新状态应默认 pending confirmation"
 [ "$(getf "$REPO" completion.workflow_version)" = 2 ] || fail "新状态应使用 workflow v2"
+
+SYMLINK_EVIDENCE="$(new_repo symlink-evidence)"
+setf "$SYMLINK_EVIDENCE" task symlink-evidence
+setf "$SYMLINK_EVIDENCE" level L1
+setf "$SYMLINK_EVIDENCE" context.target workflow-state
+setf "$SYMLINK_EVIDENCE" context.sources scripts/workflow-state.sh
+outside_evidence="$ROOT/outside-understanding.txt"
+printf '%s\n' 'acceptance: reject external evidence' 'non_goals: none' > "$outside_evidence"
+mkdir -p "$SYMLINK_EVIDENCE/docs/superpowers/.workflow-evidence"
+ln -s "$outside_evidence" "$SYMLINK_EVIDENCE/docs/superpowers/.workflow-evidence/understanding.txt"
+expect_fail "understanding evidence symlink 不得越过仓库边界" \
+  bash "$WS" --repo "$SYMLINK_EVIDENCE" understand docs/superpowers/.workflow-evidence/understanding.txt
 
 setf "$REPO" phase spec
 [ "$(getf "$REPO" phase)" = "spec" ] || fail "set/get phase"

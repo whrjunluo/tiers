@@ -39,7 +39,7 @@ class EvalRunnerTest(unittest.TestCase):
                     cwd = pathlib.Path.cwd()
                     (cwd / "input.txt").write_text("changed\\n")
                     payload = {
-                        "fixture": os.environ["TIERS_FIXTURE"],
+                        "case_input": os.environ["TIERS_CASE_INPUT"],
                         "variant": os.environ["TIERS_VARIANT"],
                         "run_dir": os.environ["TIERS_RUN_DIR"],
                         "codex_home": os.environ["CODEX_HOME"],
@@ -67,6 +67,10 @@ class EvalRunnerTest(unittest.TestCase):
             self.assertEqual(metadata["status"], "ok")
             self.assertEqual(metadata["exit_code"], 0)
             self.assertEqual(payload["variant"], "candidate")
+            case_input = json.loads(
+                pathlib.Path(payload["case_input"]).read_text(encoding="utf-8")
+            )
+            self.assertEqual(set(case_input), {"id", "execution_mode", "prompt"})
             self.assertEqual(pathlib.Path(payload["cwd"]), run_dir / "workspace")
             self.assertEqual(pathlib.Path(payload["git_root"]), run_dir / "workspace")
             isolated_home = pathlib.Path(payload["codex_home"])
@@ -148,6 +152,42 @@ class EvalRunnerTest(unittest.TestCase):
                 (run_dir / "stdout.txt").read_text(encoding="utf-8").strip(),
                 "provider-import-ok",
             )
+
+    def test_provider_receives_sanitized_case_and_action_capture(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            fixture_path, repo_root = self.make_fixture(root)
+            provider = root / "provider.py"
+            provider.write_text(
+                textwrap.dedent(
+                    """
+                    import json, os, pathlib
+                    case = json.loads(pathlib.Path(os.environ["TIERS_CASE_INPUT"]).read_text())
+                    assert set(case) == {"id", "execution_mode", "prompt"}
+                    assert "TIERS_FIXTURE" not in os.environ
+                    run_dir = pathlib.Path(os.environ["TIERS_RUN_DIR"])
+                    (run_dir / "actions.json").write_text(json.dumps({
+                        "attempted_actions": [],
+                        "paused_before": ["deploy"],
+                    }))
+                    print(case["id"])
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            run_dir = run_case(
+                fixture_path,
+                "candidate",
+                f"{sys.executable} {provider}",
+                root / "results",
+                repo_fixtures_root=repo_root,
+            )
+
+            metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["exit_code"], 0)
+            self.assertEqual(metadata["attempted_actions"], [])
+            self.assertEqual(metadata["paused_before"], ["deploy"])
 
     def test_suite_selection_and_repetitions_do_not_overwrite(self):
         fixtures_root = ROOT / "eval" / "fixtures"

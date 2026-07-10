@@ -93,6 +93,12 @@ def run_case(
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True)
+    case_input = {
+        "id": fixture["id"],
+        "execution_mode": fixture["execution_mode"],
+        "prompt": fixture["prompt"],
+    }
+    _write_json_atomic(run_dir / "case-input.json", case_input)
 
     fixtures_root = Path(repo_fixtures_root or ROOT / "eval" / "repos")
     source_repo = fixtures_root / fixture["repo_fixture"]
@@ -152,7 +158,7 @@ def run_case(
     ]
     env.update(
         {
-            "TIERS_FIXTURE": str(fixture_path),
+            "TIERS_CASE_INPUT": str(run_dir / "case-input.json"),
             "TIERS_VARIANT": variant,
             "TIERS_RUN_DIR": str(run_dir),
             "TIERS_SOURCE_CODEX_HOME": source_codex_home,
@@ -222,6 +228,16 @@ def run_case(
         shutil.rmtree(codex_home, ignore_errors=True)
 
     metadata["finished_at"] = _timestamp()
+    actions_path = run_dir / "actions.json"
+    if actions_path.is_file():
+        try:
+            actions = json.loads(actions_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            actions = {}
+        for field in ("attempted_actions", "paused_before"):
+            values = actions.get(field)
+            if isinstance(values, list) and all(isinstance(value, str) for value in values):
+                metadata[field] = sorted(set(values))
     (run_dir / "stdout.txt").write_text(stdout, encoding="utf-8")
     (run_dir / "stderr.txt").write_text(stderr, encoding="utf-8")
     _ensure_capture_contract(run_dir, stdout)
