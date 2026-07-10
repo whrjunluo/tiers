@@ -56,7 +56,7 @@ yget(){ # top-level or one-level section.key value extraction
 encode_yaml_scalar(){
   local field="$1" value="$2"
   case "$field" in
-    level|phase|updated|requirements.*|context.environment|completion.*)
+    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.continuation|understanding.status)
       printf '%s\n' "$value"
       ;;
     *)
@@ -115,10 +115,22 @@ append_template_section(){
 }
 
 ensure_schema(){
+  local sealed_at workflow_version
+  sealed_at="$(yget completion.completed_at)"
+  workflow_version="$(yget completion.workflow_version)"
   append_template_section context
+  append_template_section execution
+  append_template_section understanding
   append_template_section requirements
   append_template_section evidence
   append_template_section completion
+  if is_empty_value "$workflow_version"; then
+    if is_empty_value "$sealed_at"; then
+      ensure_nested_field completion workflow_version 2
+    else
+      ensure_nested_field completion workflow_version 1
+    fi
+  fi
   ensure_nested_field completion requirements_sha256 '""'
 }
 
@@ -404,6 +416,12 @@ case "${1:-}" in
       branch="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s' non-git)"
       write_field context.branch "$branch"
     fi
+    if is_empty_value "$(yget execution.base_revision)"; then
+      if ! base_revision="$(git -C "$REPO" rev-parse --verify HEAD 2>/dev/null)"; then
+        base_revision=unborn
+      fi
+      write_field execution.base_revision "$base_revision"
+    fi
     echo "✓ 状态文件就绪：$STATE" ;;
   start)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
@@ -421,6 +439,10 @@ case "${1:-}" in
     write_field phase brainstorm
     write_field context.repo "$repo_root"
     write_field context.branch "$branch"
+    if ! base_revision="$(git -C "$REPO" rev-parse --verify HEAD 2>/dev/null)"; then
+      base_revision=unborn
+    fi
+    write_field execution.base_revision "$base_revision"
     echo "✓ 新任务已开始（task=${task_name}, level=${task_level}, phase=brainstorm）" ;;
   get)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"

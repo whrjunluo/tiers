@@ -8,6 +8,18 @@ context:
   sources: ""
   environment: "" # real | mock | n/a
   delivery: ""
+execution:
+  mode: single
+  objective_sha256: ""
+  continuation: 0
+  base_revision: ""
+  checkpoint: ""
+understanding:
+  status: pending
+  kind: ""
+  evidence: ""
+  evidence_sha256: ""
+  scope_sha256: ""
 requirements:
   business: false
   fidelity: false
@@ -24,6 +36,7 @@ evidence:
   fidelity: ""
   residual_risks: ""
 completion:
+  workflow_version: 2
   completed_at: ""
   repository_fingerprint: ""
   requirements_sha256: ""

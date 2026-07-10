@@ -77,12 +77,35 @@ bash "$WS" --repo "$LEGACY" init >/dev/null
 [ "$(getf "$LEGACY" task)" = legacy-task ] || fail "migration 不得丢失旧 task"
 [ "$(getf "$LEGACY" requirements.business)" = false ] || fail "migration 应补 requirements"
 [ -n "$(getf "$LEGACY" context.repo)" ] || fail "migration 应补 context"
+[ "$(getf "$LEGACY" execution.mode)" = single ] || fail "未完成旧任务应迁移为 single mode"
+[ "$(getf "$LEGACY" understanding.status)" = pending ] || fail "未完成旧任务应迁移为 pending understanding"
+[ "$(getf "$LEGACY" completion.workflow_version)" = 2 ] || fail "未完成旧任务应升级为 workflow v2"
+
+# Already sealed legacy tasks remain historical v1 instead of gaining fabricated gates.
+LEGACY_SEALED="$ROOT/legacy-sealed"
+mkdir -p "$LEGACY_SEALED/docs/superpowers"
+printf '%s\n' \
+  'task: legacy-sealed' \
+  'level: L2' \
+  'phase: done' \
+  'completion:' \
+  '  completed_at: 2026-07-01T00:00:00Z' \
+  '  repository_fingerprint: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  '  requirements_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  'updated: 2026-07-01' \
+  'next: ""' > "$LEGACY_SEALED/docs/superpowers/.workflow-state.yaml"
+bash "$WS" --repo "$LEGACY_SEALED" init >/dev/null
+[ "$(getf "$LEGACY_SEALED" completion.workflow_version)" = 1 ] || fail "sealed 旧任务应保留 workflow v1"
+[ "$(getf "$LEGACY_SEALED" understanding.status)" = pending ] || fail "sealed 旧任务不得伪造 understanding pass"
 
 REPO="$(new_repo basic)"
 f="$REPO/docs/superpowers/.workflow-state.yaml"
 [ -f "$f" ] || fail "未初始化状态文件"
 [ "$(getf "$REPO" context.repo)" = "$(git -C "$REPO" rev-parse --show-toplevel)" ] || fail "init 应记录 repo"
 [ "$(getf "$REPO" context.branch)" = "feat/test-state" ] || fail "init 应记录 branch"
+[ "$(getf "$REPO" execution.mode)" = single ] || fail "新状态应默认 single mode"
+[ "$(getf "$REPO" understanding.status)" = pending ] || fail "新状态应默认 pending understanding"
+[ "$(getf "$REPO" completion.workflow_version)" = 2 ] || fail "新状态应使用 workflow v2"
 
 setf "$REPO" phase spec
 [ "$(getf "$REPO" phase)" = "spec" ] || fail "set/get phase"
