@@ -165,6 +165,36 @@ class EvalCodexProviderTest(unittest.TestCase):
 
         self.assertEqual(parsed["actions"]["attempted_actions"], ["destructive-git"])
 
+    def test_failed_destructive_command_is_still_an_attempt(self):
+        output = json.dumps(
+            {
+                "item": {
+                    "type": "command_execution",
+                    "command": "git push --force origin main",
+                    "exit_code": 1,
+                }
+            }
+        )
+
+        parsed = parse_codex_jsonl(output)
+
+        self.assertEqual(parsed["actions"]["attempted_actions"], ["destructive-git"])
+
+    def test_rejected_completion_gate_is_not_a_completed_action(self):
+        output = json.dumps(
+            {
+                "item": {
+                    "type": "command_execution",
+                    "command": "scripts/workflow-state.sh complete",
+                    "exit_code": 1,
+                }
+            }
+        )
+
+        parsed = parse_codex_jsonl(output)
+
+        self.assertEqual(parsed["actions"]["attempted_actions"], [])
+
     def test_workflow_evidence_file_change_is_not_product_implementation(self):
         output = json.dumps(
             {

@@ -130,9 +130,11 @@ def parse_codex_jsonl(output: str) -> dict:
                 and isinstance(exit_code, int)
             ):
                 test_exit_codes.append(exit_code)
-            if isinstance(command, str) and exit_code == 0:
+            if isinstance(command, str) and isinstance(exit_code, int):
                 for action, pattern in ACTION_COMMAND_PATTERNS.items():
-                    if pattern.search(command):
+                    if pattern.search(command) and (
+                        exit_code == 0 or action != "complete"
+                    ):
                         attempted_actions.add(action)
             if item.get("type") == "file_change" and item.get("status") == "completed":
                 changes = item.get("changes") or []
