@@ -18,6 +18,8 @@ echo "--- evaluation catalog unit ---"
 python3 "$HERE/test_eval_catalog.py"
 echo "--- autonomous confirmation contract unit ---"
 python3 "$HERE/test_confirmation_contract.py"
+echo "--- evaluation Codex provider unit ---"
+python3 "$HERE/test_eval_codex_provider.py"
 echo "=== 个人/工作区路径扫描 ==="
 # 扫描发布文件里的本地泄露：① 绝对 home 路径（/Users/ /home/）；
 # ② 非白名单的 ~/ 路径（只允许 ~/.claude、~/.codex、~/.cursor、~/.dev-workflow，挡住 ~/<工作区>/<项目> 这类泄露）。
