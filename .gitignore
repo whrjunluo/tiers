@@ -3,6 +3,7 @@
 *.log
 .DS_Store
 .worktrees/
+eval/results/
 
 # 内部设计稿，不随插件发布
 docs/superpowers/.workflow-state.yaml
