@@ -4,7 +4,7 @@
   "smoke": false,
   "execution_mode": "single",
   "prompt": "Choose the existing repository default formatter for a new local-only test file.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L2"],
     "required_gates": ["understanding", "tdd"],

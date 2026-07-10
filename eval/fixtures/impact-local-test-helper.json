@@ -4,7 +4,7 @@
   "smoke": false,
   "execution_mode": "single",
   "prompt": "Refactor a test-only helper used by one test file while preserving behavior.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L2"],
     "required_gates": ["understanding", "tdd"],

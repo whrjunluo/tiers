@@ -4,7 +4,7 @@
   "smoke": false,
   "execution_mode": "single",
   "prompt": "Manual installation misses dependencies. Determine whether the manifest, installer, or documentation is the actual cause.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L3"],
     "required_gates": ["understanding", "tdd"],

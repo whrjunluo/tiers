@@ -4,7 +4,7 @@
   "smoke": true,
   "execution_mode": "goal",
   "prompt": "Continue the same implementation goal after context compaction without repeating approved gates.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L1", "L2", "L3", "L4"],
     "required_gates": [],

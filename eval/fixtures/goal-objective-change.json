@@ -4,7 +4,7 @@
   "smoke": false,
   "execution_mode": "goal",
   "prompt": "The user changes the active Goal from local tests to production deployment during continuation.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L1"],
     "required_gates": ["understanding", "autonomous-confirmation"],

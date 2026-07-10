@@ -4,7 +4,7 @@
   "smoke": false,
   "execution_mode": "single",
   "prompt": "Perform cross-review when one installed provider is not authenticated.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L2", "L3"],
     "required_gates": ["understanding"],
