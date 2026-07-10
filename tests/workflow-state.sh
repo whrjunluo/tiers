@@ -156,6 +156,20 @@ task_with_yaml_syntax="Fix #123: Bob's login"
 setf "$REPO" task "$task_with_yaml_syntax"
 [ "$(getf "$REPO" task)" = "$task_with_yaml_syntax" ] || fail "set/get 应保留 #、冒号和单引号"
 
+CONCURRENT_STATE="$(new_repo concurrent-state)"
+for iteration in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  setf "$CONCURRENT_STATE" task before
+  setf "$CONCURRENT_STATE" context.target before
+  bash "$WS" --repo "$CONCURRENT_STATE" set task "task-$iteration" >/dev/null &
+  task_pid=$!
+  bash "$WS" --repo "$CONCURRENT_STATE" set context.target "target-$iteration" >/dev/null &
+  target_pid=$!
+  wait "$task_pid"
+  wait "$target_pid"
+  [ "$(getf "$CONCURRENT_STATE" task)" = "task-$iteration" ] || fail "并发 state 写入丢失 task（iteration=${iteration}）"
+  [ "$(getf "$CONCURRENT_STATE" context.target)" = "target-$iteration" ] || fail "并发 state 写入丢失 target（iteration=${iteration}）"
+done
+
 INVALID_LEVEL="$(new_repo invalid-level)"
 python3 - "$INVALID_LEVEL/docs/superpowers/.workflow-state.yaml" <<'PY'
 import pathlib
