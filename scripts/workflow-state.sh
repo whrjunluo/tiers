@@ -403,9 +403,51 @@ PY
   fi
 }
 
+is_execution_phase(){
+  case "$1" in
+    tdd|review|business-verify|fidelity-verify) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_understanding_gate(){
+  local version level status kind expected_kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope
+  version="$(yget completion.workflow_version)"
+  [ "$version" != 1 ] || return
+  level="$(yget level)"
+  status="$(yget understanding.status)"
+  if [ "$level" = L4 ]; then
+    [ "$status" = not-required ] || add_error "L4 understanding.status 应为 not-required"
+    return
+  fi
+  in_list "$level" "L0 L1 L2 L3" || { add_error "understanding gate 缺合法 level"; return; }
+  [ "$status" = passed ] || add_error "understanding.status 应为 passed，当前为 ${status:-空}"
+  expected_kind="$(understanding_kind_for_level "$level")"
+  kind="$(yget understanding.kind)"
+  [ "$kind" = "$expected_kind" ] || add_error "understanding.kind 应为 ${expected_kind}，当前为 ${kind:-空}"
+  value="$(yget understanding.evidence)"
+  if is_empty_value "$value" || ! valid_evidence_reference "$value"; then
+    add_error "understanding.evidence 引用非法: ${value:-空}"
+    return
+  fi
+  path="$(evidence_path "$value")"
+  if [ ! -s "$path" ]; then
+    add_error "understanding.evidence 不存在或为空: $value"
+    return
+  fi
+  validate_understanding_evidence "$level" "$path"
+  expected_evidence_sha="$(yget understanding.evidence_sha256)"
+  current_evidence_sha="$(file_sha256 "$path")"
+  [ "$expected_evidence_sha" = "$current_evidence_sha" ] || add_error "understanding evidence 内容已变化"
+  expected_scope="$(yget understanding.scope_sha256)"
+  current_scope="$(scope_sha256)"
+  [ "$expected_scope" = "$current_scope" ] || add_error "understanding scope 已变化，需重新评估"
+}
+
 validate_completion(){
   local mode="${1:-current}" phase level environment business fidelity external expected completed_at sealed_fingerprint sealed_requirements current_requirements
   errors=""
+  validate_understanding_gate
   for field in task level context.repo context.branch context.target context.sources context.environment context.delivery; do
     require_value "$field"
   done
@@ -546,6 +588,11 @@ case "${1:-}" in
     if [ "$field" = phase ]; then
       [ "$value" = done ] && die "禁止直接 set phase done；请使用 complete 通过证据门"
       in_list "$value" "$VALID_PHASES" || die "非法 phase ${value}（允许: $VALID_PHASES）"
+      if is_execution_phase "$value"; then
+        errors=""
+        validate_understanding_gate
+        [ -z "$errors" ] || die "理解度硬门未通过: $errors"
+      fi
     fi
     [ "$field" = level ] && { in_list "$value" "$VALID_LEVELS" || die "非法 level ${value}（允许: $VALID_LEVELS）"; }
     case "$field" in
@@ -585,10 +632,19 @@ case "${1:-}" in
       value="$(yget "$field")"
       is_empty_value "$value" || in_list "$value" "$VALID_BOOLEANS" || die "$field 非法: $value"
     done
+    understanding_status="$(yget understanding.status)"
+    is_empty_value "$understanding_status" || in_list "$understanding_status" "$VALID_UNDERSTANDING_STATUSES" || die "understanding.status 非法: $understanding_status"
+    understanding_kind="$(yget understanding.kind)"
+    is_empty_value "$understanding_kind" || in_list "$understanding_kind" "$VALID_UNDERSTANDING_KINDS" || die "understanding.kind 非法: $understanding_kind"
     sp="$(yget artifacts.spec)"; is_empty_value "$sp" || [ -f "$REPO/$sp" ] || echo "⚠ spec 文件不存在: $sp" >&2
     pp="$(yget artifacts.plan)"; is_empty_value "$pp" || [ -f "$REPO/$pp" ] || echo "⚠ plan 文件不存在: $pp" >&2
     sealed_at="$(yget completion.completed_at)"
     if [ "$ph" = done ] || ! is_empty_value "$sealed_at"; then validate_completion sealed; fi
+    if is_execution_phase "$ph"; then
+      errors=""
+      validate_understanding_gate
+      [ -z "$errors" ] || die "理解度硬门未通过: $errors"
+    fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
   *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|understand <evidence>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
