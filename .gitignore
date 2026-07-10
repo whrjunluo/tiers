@@ -7,6 +7,7 @@ eval/results/
 
 # 内部设计稿，不随插件发布
 docs/superpowers/.workflow-state.yaml
+docs/superpowers/.workflow-state.yaml.lock/
 docs/superpowers/.workflow-evidence/
 docs/superpowers/specs/
 docs/superpowers/plans/

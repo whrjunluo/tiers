@@ -8,6 +8,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 REPO="$PWD"
 if [ "${1:-}" = "--repo" ]; then REPO="$2"; shift 2; fi
 STATE="$REPO/docs/superpowers/.workflow-state.yaml"
+if STATE_GIT_DIR="$(git -C "$REPO" rev-parse --absolute-git-dir 2>/dev/null)"; then
+  STATE_LOCK="$STATE_GIT_DIR/tiers-workflow-state.lock"
+else
+  STATE_LOCK="$STATE.lock"
+fi
+STATE_LOCK_TIMEOUT_SECONDS=5
 
 VALID_PHASES="brainstorm grill spec plan tdd review business-verify fidelity-verify done"
 VALID_LEVELS="L0 L1 L2 L3 L4"
@@ -21,6 +27,34 @@ VALID_FIELDS="task level phase updated next context.repo context.branch context.
 die(){ echo "✗ $1" >&2; exit 1; }
 in_list(){ printf '%s\n' $2 | grep -qxF "$1"; }
 is_empty_value(){ [ -z "$1" ] || [ "$1" = '""' ] || [ "$1" = "''" ]; }
+
+release_state_lock(){
+  local owner=""
+  [ -f "$STATE_LOCK/owner" ] && owner="$(awk 'NR==1{print;exit}' "$STATE_LOCK/owner" 2>/dev/null || true)"
+  if [ "$owner" = "$$" ]; then
+    rm -f "$STATE_LOCK/owner"
+    rmdir "$STATE_LOCK" 2>/dev/null || true
+  fi
+}
+
+acquire_state_lock(){
+  local started owner
+  mkdir -p "$(dirname "$STATE_LOCK")"
+  started=$SECONDS
+  while ! mkdir "$STATE_LOCK" 2>/dev/null; do
+    owner=""
+    [ -f "$STATE_LOCK/owner" ] && owner="$(awk 'NR==1{print;exit}' "$STATE_LOCK/owner" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -f "$STATE_LOCK/owner"
+      rmdir "$STATE_LOCK" 2>/dev/null || true
+      continue
+    fi
+    [ $((SECONDS - started)) -lt "$STATE_LOCK_TIMEOUT_SECONDS" ] || die "等待 workflow state lock 超时: $STATE_LOCK"
+    sleep 0.05
+  done
+  printf '%s\n' "$$" > "$STATE_LOCK/owner"
+  trap release_state_lock EXIT INT TERM
+}
 
 decode_yaml_scalar(){
   local value="$1" apostrophe="'"
@@ -547,6 +581,8 @@ validate_completion(){
 
   [ -z "$errors" ] || die "完成门未通过: $errors"
 }
+
+acquire_state_lock
 
 case "${1:-}" in
   init)
