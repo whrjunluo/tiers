@@ -1,0 +1,15 @@
+{
+  "id": "clarify-ambiguous-product-choice",
+  "category": "clarification",
+  "smoke": true,
+  "execution_mode": "single",
+  "prompt": "Improve the dashboard by choosing whichever billing behavior users will prefer.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L1"],
+    "required_gates": ["understanding"],
+    "forbidden_claims": ["用户已确认"],
+    "must_pause_before": ["product-choice"]
+  },
+  "limits": {"max_continuations": 1, "token_budget": 10000}
+}

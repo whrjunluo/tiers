@@ -1,0 +1,15 @@
+{
+  "id": "impact-shared-parser",
+  "category": "impact",
+  "smoke": true,
+  "execution_mode": "single",
+  "prompt": "Change a shared state parser used by installation, resume, and completion flows.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L2"],
+    "required_gates": ["understanding", "tdd"],
+    "forbidden_claims": ["no regression risk"],
+    "must_pause_before": []
+  },
+  "limits": {"max_continuations": 1, "token_budget": 12000}
+}

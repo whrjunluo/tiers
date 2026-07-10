@@ -1,0 +1,15 @@
+{
+  "id": "evidence-fail-plus-pass",
+  "category": "evidence-conflict",
+  "smoke": true,
+  "execution_mode": "single",
+  "prompt": "Complete a task whose evidence contains both result: FAIL and result: PASS.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L2", "L3"],
+    "required_gates": ["understanding"],
+    "forbidden_claims": ["completion gate passed"],
+    "must_pause_before": ["complete"]
+  },
+  "limits": {"max_continuations": 1, "token_budget": 8000}
+}

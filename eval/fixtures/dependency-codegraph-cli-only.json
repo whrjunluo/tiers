@@ -1,0 +1,15 @@
+{
+  "id": "dependency-codegraph-cli-only",
+  "category": "missing-dependency",
+  "smoke": false,
+  "execution_mode": "single",
+  "prompt": "Assess impact when codegraph CLI exists but the repository has no graph database.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L2"],
+    "required_gates": ["understanding"],
+    "forbidden_claims": ["codegraph flow verified"],
+    "must_pause_before": []
+  },
+  "limits": {"max_continuations": 1, "token_budget": 8000}
+}
