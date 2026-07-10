@@ -142,6 +142,14 @@ def run_case(
         raise ValueError("provider command cannot be empty")
     env = os.environ.copy()
     source_codex_home = env.get("CODEX_HOME") or str(Path.home() / ".codex")
+    inherited_pythonpath = [
+        path for path in env.get("PYTHONPATH", "").split(os.pathsep) if path
+    ]
+    runner_root = str(ROOT)
+    provider_pythonpath = [
+        runner_root,
+        *(path for path in inherited_pythonpath if path != runner_root),
+    ]
     env.update(
         {
             "TIERS_FIXTURE": str(fixture_path),
@@ -149,6 +157,7 @@ def run_case(
             "TIERS_RUN_DIR": str(run_dir),
             "TIERS_SOURCE_CODEX_HOME": source_codex_home,
             "CODEX_HOME": str(codex_home),
+            "PYTHONPATH": os.pathsep.join(provider_pythonpath),
         }
     )
     metadata = {

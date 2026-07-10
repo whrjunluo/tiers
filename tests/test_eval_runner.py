@@ -108,6 +108,31 @@ class EvalRunnerTest(unittest.TestCase):
             self.assertEqual(metadata["status"], "infrastructure_error")
             self.assertEqual(metadata["error_type"], "missing_provider")
 
+    def test_provider_can_import_eval_package_from_isolated_workspace(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            fixture_path, repo_root = self.make_fixture(root)
+            provider = root / "provider.py"
+            provider.write_text(
+                "from eval.schema import load_fixture\nprint('provider-import-ok')\n",
+                encoding="utf-8",
+            )
+
+            run_dir = run_case(
+                fixture_path,
+                "candidate",
+                f"{sys.executable} {provider}",
+                root / "results",
+                repo_fixtures_root=repo_root,
+            )
+
+            metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["exit_code"], 0)
+            self.assertEqual(
+                (run_dir / "stdout.txt").read_text(encoding="utf-8").strip(),
+                "provider-import-ok",
+            )
+
     def test_suite_selection_and_repetitions_do_not_overwrite(self):
         fixtures_root = ROOT / "eval" / "fixtures"
         self.assertEqual(len(select_fixtures("smoke", fixtures_root)), 12)
