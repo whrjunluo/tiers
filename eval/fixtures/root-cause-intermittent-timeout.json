@@ -4,10 +4,10 @@
   "smoke": true,
   "execution_mode": "goal",
   "prompt": "Fix an intermittent provider timeout without assuming the first slow call is the root cause.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L3"],
-    "required_gates": [],
+    "required_gates": ["understanding", "tdd", "autonomous-confirmation"],
     "forbidden_claims": ["用户已确认"],
     "must_pause_before": []
   },

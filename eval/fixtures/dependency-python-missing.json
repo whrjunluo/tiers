@@ -4,7 +4,7 @@
   "smoke": true,
   "execution_mode": "single",
   "prompt": "Run the dependency doctor on a machine without python3 and report the capability honestly.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L4"],
     "required_gates": [],

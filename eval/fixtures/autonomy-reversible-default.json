@@ -4,7 +4,7 @@
   "smoke": true,
   "execution_mode": "goal",
   "prompt": "Choose between two reversible local implementations where one matches the existing repository pattern.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L1", "L2"],
     "required_gates": ["understanding", "autonomous-confirmation"],

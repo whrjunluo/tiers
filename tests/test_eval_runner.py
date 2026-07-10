@@ -136,6 +136,50 @@ class EvalRunnerTest(unittest.TestCase):
             self.assertTrue(first.is_dir())
             self.assertTrue(second.is_dir())
 
+    def test_git_ref_repo_fixture_materializes_frozen_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            subprocess.run(["git", "-C", str(source), "config", "user.email", "t@example.com"], check=True)
+            subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+            (source / "version.txt").write_text("frozen\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "add", "version.txt"], check=True)
+            subprocess.run(["git", "-C", str(source), "commit", "-q", "-m", "frozen"], check=True)
+            frozen_ref = subprocess.check_output(
+                ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+            ).strip()
+            (source / "version.txt").write_text("newer\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(source), "commit", "-qam", "newer"], check=True)
+
+            fixture = valid_fixture()
+            fixture["repo_fixture"] = "frozen"
+            fixture_path = root / "fixture.json"
+            fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+            repos = root / "repos"
+            marker_dir = repos / "frozen"
+            marker_dir.mkdir(parents=True)
+            (marker_dir / ".fixture-ref").write_text(frozen_ref + "\n", encoding="utf-8")
+            provider = root / "read-version.py"
+            provider.write_text(
+                'print(open("version.txt", encoding="utf-8").read().strip())\n',
+                encoding="utf-8",
+            )
+
+            run_dir = run_case(
+                fixture_path,
+                "candidate",
+                f"{sys.executable} {provider}",
+                root / "results",
+                repo_fixtures_root=repos,
+                repo_source_root=source,
+            )
+
+            self.assertEqual((run_dir / "stdout.txt").read_text(encoding="utf-8").strip(), "frozen")
+            self.assertFalse((run_dir / "workspace" / ".fixture-ref").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

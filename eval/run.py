@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import tempfile
+import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +45,22 @@ def _ensure_capture_contract(run_dir: Path, stdout: str) -> None:
             path.write_text(content, encoding="utf-8")
 
 
+def _materialize_git_ref(repo_root: Path, git_ref: str, destination: Path) -> None:
+    archive = subprocess.run(
+        ["git", "-C", str(repo_root), "archive", "--format=tar", git_ref],
+        capture_output=True,
+        check=True,
+    ).stdout
+    destination.mkdir(parents=True)
+    root = destination.resolve()
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+        for member in bundle.getmembers():
+            target = (destination / member.name).resolve()
+            if target != root and root not in target.parents:
+                raise ValueError(f"archive member escapes destination: {member.name}")
+        bundle.extractall(destination)
+
+
 def select_fixtures(suite: str, fixtures_root: Path | None = None) -> list[Path]:
     if suite not in {"smoke", "release"}:
         raise ValueError("suite must be smoke or release")
@@ -64,6 +82,7 @@ def run_case(
     timeout: float = 600,
     repetition: int = 1,
     repo_fixtures_root: Path | None = None,
+    repo_source_root: Path | None = None,
 ) -> Path:
     fixture_path = Path(fixture_path).resolve()
     fixture = load_fixture(fixture_path)
@@ -80,7 +99,14 @@ def run_case(
     if not source_repo.is_dir():
         raise FileNotFoundError(f"repo fixture not found: {source_repo}")
     workspace = run_dir / "workspace"
-    shutil.copytree(source_repo, workspace)
+    ref_marker = source_repo / ".fixture-ref"
+    if ref_marker.is_file():
+        git_ref = ref_marker.read_text(encoding="utf-8").strip()
+        if not git_ref:
+            raise ValueError(f"empty fixture ref: {ref_marker}")
+        _materialize_git_ref(Path(repo_source_root or ROOT), git_ref, workspace)
+    else:
+        shutil.copytree(source_repo, workspace)
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     subprocess.run(
         ["git", "-C", str(workspace), "config", "user.email", "tiers-eval@example.invalid"],

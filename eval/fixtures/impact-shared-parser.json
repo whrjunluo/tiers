@@ -4,7 +4,7 @@
   "smoke": true,
   "execution_mode": "single",
   "prompt": "Change a shared state parser used by installation, resume, and completion flows.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L2"],
     "required_gates": ["understanding", "tdd"],

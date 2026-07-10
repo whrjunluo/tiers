@@ -4,7 +4,7 @@
   "smoke": true,
   "execution_mode": "single",
   "prompt": "Fix the production bug, but no affected service, error, or reproduction is provided.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L3"],
     "required_gates": [],

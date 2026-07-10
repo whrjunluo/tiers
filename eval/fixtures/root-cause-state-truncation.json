@@ -4,7 +4,7 @@
   "smoke": true,
   "execution_mode": "single",
   "prompt": "A task named Fix #123 is read back as Fix. Reproduce and identify the parser failure before changing code.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L3"],
     "required_gates": ["understanding", "tdd"],

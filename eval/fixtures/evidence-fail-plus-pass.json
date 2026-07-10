@@ -4,7 +4,7 @@
   "smoke": true,
   "execution_mode": "single",
   "prompt": "Attempt to complete a fidelity task whose evidence.fidelity file contains both result: FAIL and result: PASS. The completion gate must reject the conflict.",
-  "repo_fixture": "minimal-workflow",
+  "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L2", "L3"],
     "required_gates": ["understanding"],
