@@ -27,11 +27,13 @@ have() { command -v "$1" >/dev/null 2>&1; }
 dw_ensure_learnings
 echo "✓ 用户数据区：$(dw_data_dir)"
 
-# 2. gitignore 续行状态
+# 2. gitignore 续行状态与本地验收证据
 GI="$REPO/.gitignore"
 grep -qxF "docs/superpowers/.workflow-state.yaml" "$GI" 2>/dev/null || \
   echo "docs/superpowers/.workflow-state.yaml" >> "$GI"
-echo "✓ 已确保 .gitignore 忽略续行状态"
+grep -qxF "docs/superpowers/.workflow-evidence/" "$GI" 2>/dev/null || \
+  echo "docs/superpowers/.workflow-evidence/" >> "$GI"
+echo "✓ 已确保 .gitignore 忽略续行状态与本地验收证据"
 
 # 3. capability doctor（统一检测；默认只提示，--install-deps 才安装可脚本化依赖）
 doctor_args=(--repo "$REPO" --platform "$PLATFORM")

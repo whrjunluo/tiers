@@ -6,6 +6,7 @@ PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_RO
 
 REPO="$PWD"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+DEV_WORKFLOW_DATA_DIR="${DEV_WORKFLOW_DATA:-$HOME/.dev-workflow}"
 PLATFORM=""
 INSTALL_DEPS=0
 
@@ -80,13 +81,23 @@ if have code-review-graph; then
 fi
 
 external_ready=0
-for cli in codex cursor-agent grok agy opencode mimo; do
-  have "$cli" && external_ready=$((external_ready + 1))
+external_families=""
+external_family_count=0
+for entry in codex:openai cursor-agent:cursor grok:xai agy:google opencode:configurable mimo:xiaomi; do
+  cli="${entry%%:*}"
+  family="${entry#*:}"
+  if have "$cli"; then
+    external_ready=$((external_ready + 1))
+    case " $external_families " in
+      *" $family "*) ;;
+      *) external_families="${external_families}${external_families:+ }$family"; external_family_count=$((external_family_count + 1)) ;;
+    esac
+  fi
 done
 adversarial_review=built-in
-if [ "$external_ready" -eq 1 ]; then
+if [ "$external_family_count" -eq 1 ]; then
   adversarial_review=external-partial
-elif [ "$external_ready" -ge 2 ]; then
+elif [ "$external_family_count" -ge 2 ]; then
   adversarial_review=external-ready
 fi
 
@@ -117,8 +128,27 @@ status "superpowers" "$superpowers" "optional enhanced L1/TDD/review skill chain
 status "grill-with-docs" "$grill_docs" "optional upgrade; built-in grill-me is available"
 status "Figma fidelity" "$figma_fidelity" "optional UI design verification workflow"
 status "code-review-graph" "$codegraph" "optional risk calibration and MCP registration"
-status "external-agent CLIs" "$external_ready available" "codex/cursor-agent/grok/agy/opencode/mimo"
-status "Adversarial review" "$adversarial_review" "platform subagents are detected at runtime; external-ready means 2+ external CLI providers"
+status "external-agent CLIs" "$external_ready available" "$external_family_count distinct families; codex/cursor-agent/grok/agy/opencode/mimo"
+status "Adversarial review" "$adversarial_review" "installed CLIs are candidates; actual quorum requires successful calls from 2+ distinct families"
+health_summary="$(python3 - "$DEV_WORKFLOW_DATA_DIR/external-agent-health.json" <<'PY'
+import json, sys
+try:
+    agents = json.load(open(sys.argv[1])).get("agents", {})
+except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+    agents = {}
+marked = []
+for name, state in sorted(agents.items()):
+    status = state.get("status")
+    if status not in ("slow", "degraded"):
+        continue
+    timeout = state.get("recommended_timeout_seconds")
+    suffix = f"({timeout}s)" if timeout else ""
+    marked.append(f"{name}:{status}{suffix}")
+overall = "degraded" if any(":degraded" in item for item in marked) else ("slow" if marked else "ok")
+print(overall + "|" + (", ".join(marked) if marked else "no persistent slow/degraded markers"))
+PY
+)"
+status "External agent health" "${health_summary%%|*}" "${health_summary#*|}"
 
 echo
 echo "Install commands:"

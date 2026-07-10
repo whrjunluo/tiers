@@ -4,6 +4,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 SBOX="$(mktemp -d)"
 export HOME="$SBOX/home"
 export CODEX_HOME="$HOME/.codex"
+export DEV_WORKFLOW_DATA="$SBOX/data"
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 REPO="$SBOX/repo"
 mkdir -p "$CODEX_HOME" "$REPO"
@@ -24,7 +25,13 @@ mkdir -p "$BIN"
 printf '#!/usr/bin/env sh\nexit 0\n' > "$BIN/codex"
 printf '#!/usr/bin/env sh\nexit 0\n' > "$BIN/grok"
 chmod +x "$BIN/codex" "$BIN/grok"
+mkdir -p "$DEV_WORKFLOW_DATA"
+printf '%s\n' '{"version":1,"agents":{"antigravity":{"status":"slow","recommended_timeout_seconds":360,"timeout_count":1,"consecutive_timeouts":0,"success_count":2}}}' > "$DEV_WORKFLOW_DATA/external-agent-health.json"
 out_external="$(PATH="$BIN:/usr/bin:/bin:/usr/sbin:/sbin" bash "$HERE/bin/doctor" --repo "$REPO" --codex-home "$CODEX_HOME" --platform codex)"
 echo "$out_external" | grep -q "Adversarial review: external-ready" || { echo "FAIL: should report external-ready with two external CLIs"; echo "$out_external"; exit 1; }
+echo "$out_external" | grep -q "2 distinct families" || { echo "FAIL: doctor should report distinct family count"; echo "$out_external"; exit 1; }
+echo "$out_external" | grep -q "actual quorum requires successful calls" || { echo "FAIL: doctor should distinguish installed candidates from passed quorum"; echo "$out_external"; exit 1; }
+echo "$out_external" | grep -q "External agent health: slow" || { echo "FAIL: doctor should surface persistent provider health"; echo "$out_external"; exit 1; }
+echo "$out_external" | grep -q "antigravity:slow(360s)" || { echo "FAIL: doctor should include the slow provider timeout recommendation"; echo "$out_external"; exit 1; }
 
 echo "PASS tests/doctor.sh"

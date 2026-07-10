@@ -9,12 +9,12 @@
 ## 它能做什么
 
 - **分级决策树（L0–L4）+ 判级加固**：显式判级输出、tie-breaker（拿不准走更严级别）、边界示例表。
-- **跨 session 续行**：每个项目一份状态文件，脚本独占读写，换会话不丢进度。
+- **跨 session 续行 + 完成证据门**：L0/L1 与高风险业务 L2/L3 维护项目状态；测试、真实请求、codegraph、外部评审和残余风险证据不齐时，脚本拒绝进入 done。
 - **跨项目自主进化**：你纠正判级 → 积累 → 同类够阈值 → 提案把规则固化进 skill（人工放行）。
 - **codegraph 判级集成**：装了 `code-review-graph` 时用客观风险分校准级别；没装则自动降级为纯人工判级。
 - **依赖 doctor + 内置兜底**：检测 skills / CLI / MCP 能力，输出 base / enhanced / full 模式；缺增强依赖时不阻塞核心工作流。
 - **对抗评审 provider 分层**：没有外部模型时走内置 checklist；有平台子代理、多模型或外部 CLI 时升级为只读交叉评审。
-- **统一外部 Agent 委派**：一个 `external-agent` skill + `scripts/external_agent.py` runner，按"搜集 / 实现 / 交叉审核"路由到 codex / cursor / grok / mimo / opencode / antigravity（agy）；`--mode review`（只读二次意见）或 `--mode delegate`（授权后可写），`--SESSION_ID` 多轮续接、`--format json` 归一输出。委派不降级工作流，主 Agent 负责核验。
+- **统一外部 Agent 委派**：一个 runner 路由 codex / cursor / grok / mimo / opencode / antigravity（agy）；`--cross-review a,b` 冻结同一输入并只在两个不同家族成功返回时形成 quorum。超时会沉淀为跨会话 provider 健康标记和建议超时。委派不降级工作流，主 Agent 负责核验。
 
 ---
 
@@ -131,9 +131,9 @@ doctor 还会输出对抗评审能力：
 |---|---|
 | `built-in` | 没有额外 provider，使用内置反方 checklist |
 | `external-partial` | 检测到 1 个外部 CLI，可做二次意见但不算完整交叉评审 |
-| `external-ready` | 检测到 2 个以上外部 CLI，可做不同家族交叉评审 |
+| `external-ready` | 检测到 2 个以上不同家族 CLI 候选；实际调用成功并返回 `quorum=true` 才算评审通过 |
 
-平台内子代理和多模型能力由运行时检测：如果当前 Codex/Claude 暴露 subagent 工具，`dev-workflow` 会优先使用平台子代理；用户明确允许多模型时，再给 reviewer 分配不同模型。没有这些能力时不阻塞，退回内置 checklist。
+平台内子代理和多模型能力由运行时检测。触发外部交叉评审时，外部 CLI 优先，平台子代理只作不可用时的降级或额外补充，不能冒充已通过的外部 quorum。
 
 默认不会静默安装依赖。需要自动安装可脚本化依赖时，显式运行：
 
@@ -164,9 +164,14 @@ python3 <plugin-root>/scripts/external_agent.py --agent antigravity \
 # 授权后让 agent 实现（可写，限定在 --cd 内）
 python3 <plugin-root>/scripts/external_agent.py --agent codex \
   --cd "$PWD" --mode delegate --format json --PROMPT '实现 X，输出 diff'
+
+# 同一 diff 的双家族只读评审；JSON 可直接登记为完成证据
+python3 <plugin-root>/scripts/external_agent.py --cross-review agy,mimo \
+  --cd "$PWD" --context git --format json --PROMPT '只报告有证据的问题' \
+  > docs/superpowers/.workflow-evidence/external-review.json
 ```
 
-`--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`（`--list` 查可用）。`--mode review`（默认，只读二次意见）/ `--mode delegate`（授权后可写）。`--context git` 把分支、`git status`、diff 摘要与当前 diff 作为共享上下文附加到任务前；研究类问题用 `--context none`。`--format json` 归一为 `{success, SESSION_ID, agent_messages}`，`--SESSION_ID` 多轮续接。runner 用保守权限参数、不会静默回退到别的 agent。不要把密钥、`.env` 内容或无关私有文件发送给外部 Agent。
+`--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`。`--list` 同时显示 family、`health_status`、`routing_priority` 和 `recommended_timeout_seconds`；首次超时标记为 `slow` 并提高建议值，当前存在失败 streak 就降为 `deprioritized`，连续两次失败升级为 `degraded`，恢复成功后保留 `slow` 历史。调度默认优先健康的 `grok` / `cursor` / `mimo` 组合，慢速 `antigravity` 放到后备位；用户明确指定时仍会调用并报告状态。省略 `--timeout` 时自动采用 provider 建议值，显式传值仍是本次硬上限。`--cross-review` 只读调用逗号分隔的多个 reviewer，输出 artifact hash、repository fingerprint、生成时间、逐 reviewer 结果、成功 family 和 quorum；完成门只接受 24 小时内且仍匹配当前仓库的报告。`--context git` 会发送当前 staged/unstaged diff；不要包含密钥、`.env`、完整敏感 payload 或无关私有文件。
 
 ## 脚本路径
 
@@ -174,10 +179,12 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 
 ```bash
 <plugin-root>/scripts/workflow-state.sh check     # 正确
+<plugin-root>/scripts/workflow-state.sh complete  # 证据齐全后唯一合法的 done 入口
+<plugin-root>/scripts/workflow-state.sh start <task> <level>  # sealed 后开始下一任务
 <plugin-root>/skills/dev-workflow/scripts/...      # 错误，此路径不存在
 ```
 
-`workflow-state.sh check` 在新项目没有状态文件时会输出「无续行状态」并正常退出。
+`workflow-state.sh check` 在新项目没有状态文件时会输出「无续行状态」并正常退出。`complete` 通过后会写入完成时间、repository fingerprint 和 requirements hash；sealed 状态不可再 `set` 或重复完成，必须用 `start` 开下一任务。后续仓库继续开发不会使历史 done 状态失效。
 
 ## 分级速查
 
@@ -185,7 +192,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 |---|---|---|
 | **L0** 大型改造 | 跨模块重构、架构迁移 | 范围审视 → 架构验证 → 实现 → QA → 发布 |
 | **L1** 大功能 | 新增模块 / 跨文件设计 | brainstorm → spec → grill-me → plan → TDD → review |
-| **L2** 中型迭代 | 改已有逻辑，≥3 文件 | 轻量 spec → TDD →（可选）review |
+| **L2** 中型迭代 | 改已有逻辑，≥3 文件 | 轻量 spec → TDD → 条件评审；高风险业务闭环强制状态/外部评审/证据门 |
 | **L3** Bug 修复 | 线上回归 / 行为问题 | 系统性调试 → 复现测试 → 修复 |
 | **L4** 文案/样式 | 纯 UI 文字 / 样式 | 直接写，无需 spec 或测试 |
 
@@ -202,7 +209,9 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 | 数据 | 位置 | 作用域 |
 |---|---|---|
 | 进化日志 `LEARNINGS.md` | `$DEV_WORKFLOW_DATA`；未设时统一为 `~/.dev-workflow/`（Claude / Codex / Cursor 共享一份，首次运行自动从旧的 `~/.codex/dev-workflow`、`~/.claude/dev-workflow` 迁移） | 全局跨工具、跨项目 |
+| 外部 agent 健康状态 `external-agent-health.json` | `$DEV_WORKFLOW_DATA`；未设时为 `~/.dev-workflow/` | 全局跨会话、跨项目 |
 | 续行状态 | `<项目>/docs/superpowers/.workflow-state.yaml`（自动 gitignore） | 单项目 |
+| 完成证据 | `<项目>/docs/superpowers/.workflow-evidence/`（自动 gitignore，不得存密钥或完整敏感 payload） | 单项目 |
 
 ## 依赖
 
@@ -227,7 +236,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 
 - `dev-workflow` — 工作流路由主 skill。
 - `grill-me` — L0/L1 设计文档定稿前追问一轮、补边界。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
-- `external-agent` — 统一外部 agent 委派：一个 `scripts/external_agent.py` runner 路由到 codex / cursor / grok / mimo / opencode / antigravity（agy），支持 `--mode review|delegate`、`--format text|json`、`--SESSION_ID` 多轮、`--context git`、`--list`。codex/gemini 适配解析逻辑参考自 [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT），其余为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
+- `external-agent` — 统一外部 agent 委派：支持单 agent 调用和 `--cross-review` 双家族 quorum，包含 `--mode review|delegate`、`--format text|json`、`--SESSION_ID`、`--context git`、`--list`。codex/gemini 适配解析逻辑参考自 [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT），其余为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
 
 ## 诊断脚本
 
