@@ -19,25 +19,59 @@ die(){ echo "✗ $1" >&2; exit 1; }
 in_list(){ printf '%s\n' $2 | grep -qxF "$1"; }
 is_empty_value(){ [ -z "$1" ] || [ "$1" = '""' ] || [ "$1" = "''" ]; }
 
+decode_yaml_scalar(){
+  local value="$1" apostrophe="'"
+  case "$value" in
+    \'*\') value="${value#\'}"; value="${value%\'}"; value="${value//\'\'/$apostrophe}" ;;
+    \"*\") value="${value#\"}"; value="${value%\"}" ;;
+  esac
+  printf '%s\n' "$value"
+}
+
 yget(){ # top-level or one-level section.key value extraction
-  local k="$1"
+  local k="$1" raw
   case "$k" in
     *.*)
       local section="${k%%.*}" key="${k#*.}"
-      awk -v section="$section" -v key="$key" '
+      raw="$(awk -v section="$section" -v key="$key" '
         $0==section":"{f=1;next}
         f&&$0!~/^[[:space:]]/{f=0}
-        f&&$1==key":"{sub(/^[[:space:]]*[^:]+:[[:space:]]*/,"");sub(/[[:space:]]+#.*$/,"");print;exit}
-      ' "$STATE" ;;
-    *) awk -v k="$k" '$1==k":"{sub(/^[^:]+:[[:space:]]*/,"");sub(/[[:space:]]+#.*$/,"");print;exit}' "$STATE" ;;
+        f&&$1==key":"{
+          sub(/^[[:space:]]*[^:]+:[[:space:]]*/,"")
+          if(substr($0,1,1)!=sprintf("%c",39)) sub(/[[:space:]]+#.*$/,"")
+          print;exit
+        }
+      ' "$STATE")" ;;
+    *) raw="$(awk -v k="$k" '
+      $1==k":"{
+        sub(/^[^:]+:[[:space:]]*/,"")
+        if(substr($0,1,1)!=sprintf("%c",39)) sub(/[[:space:]]+#.*$/,"")
+        print;exit
+      }
+    ' "$STATE")" ;;
+  esac
+  decode_yaml_scalar "$raw"
+}
+
+encode_yaml_scalar(){
+  local field="$1" value="$2"
+  case "$field" in
+    level|phase|updated|requirements.*|context.environment|completion.*)
+      printf '%s\n' "$value"
+      ;;
+    *)
+      value="${value//\'/\'\'}"
+      printf "'%s'\n" "$value"
+      ;;
   esac
 }
 
 write_field(){
-  local field="$1" value="$2" today tmp
+  local field="$1" value="$2" encoded_value today tmp
+  encoded_value="$(encode_yaml_scalar "$field" "$value")"
   today="$(date +%F)"
   tmp="$(mktemp)"
-  if ! awk -v field="$field" -v value="$value" -v today="$today" '
+  if ! awk -v field="$field" -v value="$encoded_value" -v today="$today" '
     BEGIN {
       nested=(index(field,".")>0)
       if(nested){section=substr(field,1,index(field,".")-1); key=substr(field,index(field,".")+1)}
@@ -148,6 +182,14 @@ requirements_sha256(){
   } | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
+require_single_pass_result(){
+  local field="$1" path="$2" count
+  count="$(grep -cE '^result:' "$path" || true)"
+  if [ "$count" -ne 1 ] || ! grep -qE '^result:[[:space:]]*PASS[[:space:]]*$' "$path"; then
+    add_error "$field 必须且只能包含一个 result: PASS"
+  fi
+}
+
 validate_evidence_shape(){
   local field="$1" path="$2"
   case "$field" in
@@ -156,9 +198,10 @@ validate_evidence_shape(){
       grep -qE '^exit_code:[[:space:]]*0[[:space:]]*$' "$path" || add_error "$field 缺 exit_code: 0"
       ;;
     evidence.business)
-      grep -qE '^result:[[:space:]]*[^[:space:]]' "$path" || add_error "$field 缺 result:"
+      require_single_pass_result "$field" "$path"
       ;;
     evidence.requests)
+      require_single_pass_result "$field" "$path"
       grep -qE '^method:[[:space:]]*[^[:space:]]' "$path" || add_error "$field 缺 method:"
       grep -qE '^url:[[:space:]]*[^[:space:]]' "$path" || add_error "$field 缺 url:"
       grep -qE '^status:[[:space:]]*[0-9]{3}[[:space:]]*$' "$path" || add_error "$field 缺三位 status:"
@@ -167,7 +210,7 @@ validate_evidence_shape(){
       grep -qE '^(result|degraded):[[:space:]]*[^[:space:]]' "$path" || add_error "$field 缺 result: 或 degraded:"
       ;;
     evidence.fidelity)
-      grep -qE '^result:[[:space:]]*[^[:space:]]' "$path" || add_error "$field 缺 result:"
+      require_single_pass_result "$field" "$path"
       ;;
     evidence.residual_risks)
       if ! grep -qE '^risk:[[:space:]]*[^[:space:]]' "$path"; then

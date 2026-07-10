@@ -130,7 +130,8 @@ status "Figma fidelity" "$figma_fidelity" "optional UI design verification workf
 status "code-review-graph" "$codegraph" "optional risk calibration and MCP registration"
 status "external-agent CLIs" "$external_ready available" "$external_family_count distinct families; codex/cursor-agent/grok/agy/opencode/mimo"
 status "Adversarial review" "$adversarial_review" "installed CLIs are candidates; actual quorum requires successful calls from 2+ distinct families"
-health_summary="$(python3 - "$DEV_WORKFLOW_DATA_DIR/external-agent-health.json" <<'PY'
+if have python3; then
+  health_summary="$(python3 - "$DEV_WORKFLOW_DATA_DIR/external-agent-health.json" <<'PY'
 import json, sys
 try:
     agents = json.load(open(sys.argv[1])).get("agents", {})
@@ -148,6 +149,9 @@ overall = "degraded" if any(":degraded" in item for item in marked) else ("slow"
 print(overall + "|" + (", ".join(marked) if marked else "no persistent slow/degraded markers"))
 PY
 )"
+else
+  health_summary="unavailable|python3 missing; persistent provider markers not inspected"
+fi
 status "External agent health" "${health_summary%%|*}" "${health_summary#*|}"
 
 echo
