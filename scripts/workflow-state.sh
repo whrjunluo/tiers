@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
-# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|get <field>|set <field> <value>|check|complete}
+# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
 set -euo pipefail
 # 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -15,6 +15,7 @@ VALID_BOOLEANS="true false"
 VALID_ENVIRONMENTS="real mock n/a"
 VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
 VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
+VALID_CONFIRMATION_STATUSES="pending passed blocked"
 VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.checkpoint requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
 
 die(){ echo "✗ $1" >&2; exit 1; }
@@ -58,7 +59,7 @@ yget(){ # top-level or one-level section.key value extraction
 encode_yaml_scalar(){
   local field="$1" value="$2"
   case "$field" in
-    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.continuation|understanding.status)
+    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.continuation|understanding.status|confirmation.mode|confirmation.status)
       printf '%s\n' "$value"
       ;;
     *)
@@ -123,6 +124,7 @@ ensure_schema(){
   append_template_section context
   append_template_section execution
   append_template_section understanding
+  append_template_section confirmation
   append_template_section requirements
   append_template_section evidence
   append_template_section completion
@@ -241,12 +243,20 @@ reset_understanding(){
   write_field understanding.scope_sha256 ""
 }
 
+reset_confirmation(){
+  local status="${1:-pending}"
+  write_field confirmation.mode ""
+  write_field confirmation.status "$status"
+  write_field confirmation.evidence ""
+  write_field confirmation.decision_sha256 ""
+}
+
 validate_understanding_evidence(){
   local level="$1" path="$2" expected_kind actual_kind key
   expected_kind="$(understanding_kind_for_level "$level")" || add_error "无法识别 understanding level: $level"
   require_single_pass_result understanding "$path"
   actual_kind="$(evidence_scalar kind "$path")"
-  [ "$actual_kind" = "$expected_kind" ] || add_error "understanding kind 应为 $expected_kind，当前为 ${actual_kind:-空}"
+  [ "$actual_kind" = "$expected_kind" ] || add_error "understanding kind 应为 ${expected_kind}，当前为 ${actual_kind:-空}"
   case "$level" in
     L0) required_keys="boundaries migration rollback" ;;
     L1) required_keys="acceptance non_goals" ;;
@@ -417,7 +427,7 @@ is_execution_phase(){
 validate_understanding_gate(){
   local version level status kind expected_kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope
   version="$(yget completion.workflow_version)"
-  [ "$version" != 1 ] || return
+  [ "$version" != 1 ] || return 0
   level="$(yget level)"
   status="$(yget understanding.status)"
   if [ "$level" = L4 ]; then
@@ -448,10 +458,41 @@ validate_understanding_gate(){
   [ "$expected_scope" = "$current_scope" ] || add_error "understanding scope 已变化，需重新评估"
 }
 
+validate_confirmation_gate(){
+  local version level mode status value path expected_sha current_sha scope output
+  version="$(yget completion.workflow_version)"
+  [ "$version" != 1 ] || return 0
+  [ "$(yget execution.mode)" = goal ] || return 0
+  level="$(yget level)"
+  [ "$level" != L4 ] || return 0
+  mode="$(yget confirmation.mode)"
+  status="$(yget confirmation.status)"
+  [ "$mode" = autonomous ] || add_error "Goal confirmation.mode 应为 autonomous，当前为 ${mode:-空}"
+  [ "$status" = passed ] || add_error "Goal confirmation.status 应为 passed，当前为 ${status:-空}"
+  value="$(yget confirmation.evidence)"
+  if is_empty_value "$value" || ! valid_evidence_reference "$value"; then
+    add_error "confirmation.evidence 引用非法: ${value:-空}"
+    return
+  fi
+  path="$(evidence_path "$value")"
+  if [ ! -s "$path" ]; then
+    add_error "confirmation.evidence 不存在或为空: $value"
+    return
+  fi
+  scope="$(yget understanding.scope_sha256)"
+  if ! output="$(python3 "$PLUGIN_ROOT/scripts/confirmation_contract.py" --validate "$path" --scope "$scope" 2>&1)"; then
+    add_error "confirmation artifact 无效: ${output//$'\n'/; }"
+  fi
+  expected_sha="$(yget confirmation.decision_sha256)"
+  current_sha="$(file_sha256 "$path")"
+  [ "$expected_sha" = "$current_sha" ] || add_error "confirmation artifact 内容已变化"
+}
+
 validate_completion(){
   local mode="${1:-current}" phase level environment business fidelity external expected completed_at sealed_fingerprint sealed_requirements current_requirements
   errors=""
   validate_understanding_gate
+  validate_confirmation_gate
   for field in task level context.repo context.branch context.target context.sources context.environment context.delivery; do
     require_value "$field"
   done
@@ -501,7 +542,7 @@ validate_completion(){
   if [ "$mode" = sealed ]; then
     [ "$phase" = done ] || add_error "封存状态 phase 应为 done，当前为 ${phase:-空}"
   else
-    [ "$phase" = "$expected" ] || add_error "phase 应为 $expected，当前为 ${phase:-空}"
+    [ "$phase" = "$expected" ] || add_error "phase 应为 ${expected}，当前为 ${phase:-空}"
   fi
 
   [ -z "$errors" ] || die "完成门未通过: $errors"
@@ -537,7 +578,7 @@ case "${1:-}" in
     ! is_empty_value "$sealed_at" || die "只有已完成并封存的任务可 start 新任务"
     task_name="$2"; task_level="$3"
     [ -n "$task_name" ] || die "task 不能为空"
-    in_list "$task_level" "$VALID_LEVELS" || die "非法 level ${task_level}（允许: $VALID_LEVELS）"
+    in_list "$task_level" "$VALID_LEVELS" || die "非法 level ${task_level}（允许: ${VALID_LEVELS}）"
     cp "$PLUGIN_ROOT/templates/workflow-state.yaml" "$STATE"
     repo_root="$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$REPO")"
     branch="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s' non-git)"
@@ -564,6 +605,7 @@ case "${1:-}" in
     write_field execution.continuation 0
     write_field execution.checkpoint ""
     if [ "$(yget level)" = L4 ]; then reset_understanding not-required; else reset_understanding pending; fi
+    reset_confirmation pending
     echo "✓ Goal 已初始化（continuation=0，understanding=$(yget understanding.status)）" ;;
   continue-goal)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
@@ -583,6 +625,7 @@ case "${1:-}" in
       write_field execution.objective_sha256 "$current_hash"
       write_field execution.checkpoint ""
       if [ "$(yget level)" = L4 ]; then reset_understanding not-required; else reset_understanding pending; fi
+      reset_confirmation pending
       reuse="$(yget understanding.status)"
     fi
     echo "✓ 目标续行 = 第 $(yget execution.continuation) 次｜phase = $(yget phase)｜理解度 = $reuse" ;;
@@ -613,7 +656,31 @@ case "${1:-}" in
     write_field understanding.evidence_sha256 "$(file_sha256 "$path")"
     write_field understanding.scope_sha256 "$(scope_sha256)"
     write_field understanding.status passed
+    reset_confirmation pending
     echo "✓ 理解度 = PASS（kind=$(understanding_kind_for_level "$level")）" ;;
+  confirm)
+    [ -f "$STATE" ] || die "状态文件不存在，先 init"
+    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] confirm <json>"
+    sealed_at="$(yget completion.completed_at)"
+    is_empty_value "$sealed_at" || die "任务已封存；不得更新 confirmation"
+    [ "$(yget execution.mode)" = goal ] || die "只有 Goal mode 需要 autonomous confirmation"
+    [ "$(yget level)" != L4 ] || die "L4 Goal 无需 confirmation"
+    errors=""
+    validate_understanding_gate
+    [ -z "$errors" ] || die "自治确认前理解度无效: $errors"
+    value="$2"
+    valid_evidence_reference "$value" || die "confirmation evidence 必须位于 docs/superpowers/.workflow-evidence/ 且不得包含 ..: $value"
+    path="$(evidence_path "$value")"
+    [ -s "$path" ] || die "confirmation evidence 不存在或为空: $value"
+    scope="$(yget understanding.scope_sha256)"
+    if ! output="$(python3 "$PLUGIN_ROOT/scripts/confirmation_contract.py" --validate "$path" --scope "$scope" 2>&1)"; then
+      die "自治确认未通过: ${output//$'\n'/; }"
+    fi
+    write_field confirmation.mode autonomous
+    write_field confirmation.evidence "$value"
+    write_field confirmation.decision_sha256 "$(file_sha256 "$path")"
+    write_field confirmation.status passed
+    echo "✓ 自治确认 = PASS（artifact=${value}）" ;;
   get)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     yget "$2" ;;
@@ -625,14 +692,15 @@ case "${1:-}" in
     in_list "$field" "$VALID_FIELDS" || die "未知字段 ${field}（允许: ${VALID_FIELDS}）"
     if [ "$field" = phase ]; then
       [ "$value" = done ] && die "禁止直接 set phase done；请使用 complete 通过证据门"
-      in_list "$value" "$VALID_PHASES" || die "非法 phase ${value}（允许: $VALID_PHASES）"
+      in_list "$value" "$VALID_PHASES" || die "非法 phase ${value}（允许: ${VALID_PHASES}）"
       if is_execution_phase "$value"; then
         errors=""
         validate_understanding_gate
-        [ -z "$errors" ] || die "理解度硬门未通过: $errors"
+        validate_confirmation_gate
+        [ -z "$errors" ] || die "执行硬门未通过: $errors"
       fi
     fi
-    [ "$field" = level ] && { in_list "$value" "$VALID_LEVELS" || die "非法 level ${value}（允许: $VALID_LEVELS）"; }
+    [ "$field" = level ] && { in_list "$value" "$VALID_LEVELS" || die "非法 level ${value}（允许: ${VALID_LEVELS}）"; }
     case "$field" in
       requirements.*) in_list "$value" "$VALID_BOOLEANS" || die "$field 只能是 true/false" ;;
       context.environment) in_list "$value" "$VALID_ENVIRONMENTS" || die "$field 只能是 real/mock/n/a" ;;
@@ -676,6 +744,8 @@ case "${1:-}" in
     is_empty_value "$understanding_status" || in_list "$understanding_status" "$VALID_UNDERSTANDING_STATUSES" || die "understanding.status 非法: $understanding_status"
     understanding_kind="$(yget understanding.kind)"
     is_empty_value "$understanding_kind" || in_list "$understanding_kind" "$VALID_UNDERSTANDING_KINDS" || die "understanding.kind 非法: $understanding_kind"
+    confirmation_status="$(yget confirmation.status)"
+    is_empty_value "$confirmation_status" || in_list "$confirmation_status" "$VALID_CONFIRMATION_STATUSES" || die "confirmation.status 非法: $confirmation_status"
     sp="$(yget artifacts.spec)"; is_empty_value "$sp" || [ -f "$REPO/$sp" ] || echo "⚠ spec 文件不存在: $sp" >&2
     pp="$(yget artifacts.plan)"; is_empty_value "$pp" || [ -f "$REPO/$pp" ] || echo "⚠ plan 文件不存在: $pp" >&2
     sealed_at="$(yget completion.completed_at)"
@@ -683,9 +753,10 @@ case "${1:-}" in
     if is_execution_phase "$ph"; then
       errors=""
       validate_understanding_gate
-      [ -z "$errors" ] || die "理解度硬门未通过: $errors"
+      validate_confirmation_gate
+      [ -z "$errors" ] || die "执行硬门未通过: $errors"
     fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
-  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
+  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
 esac
