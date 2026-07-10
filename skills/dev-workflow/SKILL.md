@@ -159,10 +159,13 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 
 | 级别 | 动手前要"懂"的对象 | 没懂时 |
 |---|---|---|
+| L0 | 架构边界 / 迁移 / 回滚路径 | 留在 spec/architecture review；边界未锁定不得进入实施 |
 | L1 | 需求 / 设计（决策树分支、边界） | 进 `grill-me`；想跳过需用户点头（详见 L1 HARD-GATE） |
 | L2 | 改动的影响面 / 回归边界 / 能否写出覆盖测试 | 跑 `codegraph-judge assess` 看 affected flow / test gap，或直接读消费方；**影响面超预期（跨模块/结构性）→ 回去重判级（可能 L1/L0）** |
 | L3 | bug 的**真正根因**（不是症状冒出点） | 留在 `systematic-debugging`，别急着改；**"修复"其实是在加新行为 → 重判级（可能 L2）** |
 | L4 | （风险≈0，免） | — |
+
+L0–L3 必须把理解证据写入 `docs/superpowers/.workflow-evidence/`，再运行 `workflow-state.sh understand <仓库相对证据路径>`。证据按 tier 分别包含 architecture 的 `boundaries/migration/rollback`、requirements 的 `acceptance/non_goals`、impact 的 `affected/tests`、root-cause 的 `reproduction/root_cause`；共同要求有且仅有一个 `result: PASS`。通过后先显示：`理解度 = PASS｜类型 = root-cause｜依据 = 稳定复现 + 根因证据`。`tdd`、`review`、`business-verify`、`fidelity-verify` 与 `complete` 都会重新校验 scope/evidence hash，目标、范围、requirements 或证据变化后必须重新理解，不能只改 status。
 
 ---
 
@@ -416,6 +419,8 @@ next: 下一步具体该做什么
 3. **声明关卡**：业务闭环设置 `requirements.business=true`，脚本会强制同时满足 `requirements.external_review=true`；其他触发外部评审的任务也设置 `requirements.external_review=true`；设计保真设置 `requirements.fidelity=true`。
 4. **每过一个阶段**：`set phase/next`，有 spec/plan 则设置 artifacts；每项验收先按上述最低格式写进本地证据目录，再 `set evidence.<field> <path>`。
 5. **收尾**：普通任务停在 `review`，业务任务停在 `business-verify`，设计任务停在 `fidelity-verify`。运行 `<plugin-root>/scripts/workflow-state.sh complete`；脚本验证上下文、证据格式、真实业务环境，以及当前仓库 24 小时内的双家族 quorum 后，写入 repository fingerprint 与 `requirements_sha256` seal 再进入 `done`。sealed 状态不可修改，requirements 手工降级或 phase 解封会使 `check` 失败；后续仓库继续开发或自然超过 24 小时不会推翻历史完成。`set phase done` 永远拒绝。
+
+**Goal 模式：** 只有用户已经设置 Goal 时才运行 `workflow-state.sh goal "<objective>"`；tiers 不得自行创建 Goal。自动续行使用 `continue-goal "<objective>"`，显示 `目标续行 = 第 N 次｜phase = tdd｜理解度 = 复用`。相同 objective 只增加 continuation 并保留 checkpoint；objective 发生变化时清空 checkpoint，并把 understanding 重置为 `pending`。状态只保存 objective SHA-256，不保存目标原文。单次续行结束、token 接近上限或代码写完都不等于 Goal 完成。
 
 ---
 
