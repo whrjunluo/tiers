@@ -12,6 +12,8 @@ echo "--- evaluation schema unit ---"
 python3 "$HERE/test_eval_schema.py"
 echo "--- evaluation grader unit ---"
 python3 "$HERE/test_eval_grade.py"
+echo "--- evaluation runner unit ---"
+python3 "$HERE/test_eval_runner.py"
 echo "=== 个人/工作区路径扫描 ==="
 # 扫描发布文件里的本地泄露：① 绝对 home 路径（/Users/ /home/）；
 # ② 非白名单的 ~/ 路径（只允许 ~/.claude、~/.codex、~/.cursor、~/.dev-workflow，挡住 ~/<工作区>/<项目> 这类泄露）。

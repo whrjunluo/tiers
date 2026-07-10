@@ -139,4 +139,3 @@ def grade_run(fixture: dict, run_dir: Path) -> dict:
     if forbidden_claims:
         result["reasons"]["forbidden_claim_absent"] = forbidden_claims
     return result
-
