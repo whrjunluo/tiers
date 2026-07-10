@@ -135,6 +135,48 @@ path.write_text(path.read_text().replace('environment: "" # real | mock | n/a', 
 PY
 expect_fail "check 应拒绝手工写入的非法 environment" bash "$WS" --repo "$INVALID_ENV" check
 
+# Understanding evidence is tier-specific and content-addressed.
+understanding_repo(){
+  local name="$1" level="$2" repo
+  repo="$(new_repo "$name")"
+  setf "$repo" task "$name-task"
+  setf "$repo" level "$level"
+  setf "$repo" context.target scripts/workflow-state.sh
+  setf "$repo" context.sources user-request-and-repo
+  printf '%s\n' "$repo"
+}
+understand_pass(){
+  local name="$1" level="$2" body="$3" expected_kind="$4" repo path
+  repo="$(understanding_repo "$name" "$level")"
+  path="$(evidence "$repo" understanding.txt "$body")"
+  bash "$WS" --repo "$repo" understand "$path" >/dev/null
+  [ "$(getf "$repo" understanding.status)" = passed ] || fail "$level understanding 应通过"
+  [ "$(getf "$repo" understanding.kind)" = "$expected_kind" ] || fail "$level understanding kind 错误"
+  printf '%s\n' "$(getf "$repo" understanding.scope_sha256)" | grep -qE '^[0-9a-f]{64}$' || fail "$level scope hash 缺失"
+  printf '%s\n' "$(getf "$repo" understanding.evidence_sha256)" | grep -qE '^[0-9a-f]{64}$' || fail "$level evidence hash 缺失"
+}
+understand_pass understanding-l0 L0 $'result: PASS\nkind: architecture\nboundaries: state and consumers\nmigration: preserve sealed v1\nrollback: restore previous template' architecture
+understand_pass understanding-l1 L1 $'result: PASS\nkind: requirements\nacceptance: visible hard gate\nnon_goals: no model leaderboard' requirements
+understand_pass understanding-l2 L2 $'result: PASS\nkind: impact\naffected: state transitions\ntests: workflow-state suite' impact
+understand_pass understanding-l3 L3 $'result: PASS\nkind: root-cause\nreproduction: task with hash truncates\nroot_cause: comment stripping ignores quoting' root-cause
+
+UNDERSTANDING_WRONG_KIND="$(understanding_repo understanding-wrong-kind L3)"
+setf "$UNDERSTANDING_WRONG_KIND" evidence.tests "$(evidence "$UNDERSTANDING_WRONG_KIND" understanding.txt $'result: PASS\nkind: impact\naffected: parser\ntests: state test')"
+expect_fail "L3 understanding 应拒绝错误 kind" bash "$WS" --repo "$UNDERSTANDING_WRONG_KIND" understand "$(getf "$UNDERSTANDING_WRONG_KIND" evidence.tests)"
+
+UNDERSTANDING_MISSING="$(understanding_repo understanding-missing L2)"
+missing_understanding="$(evidence "$UNDERSTANDING_MISSING" understanding.txt $'result: PASS\nkind: impact\naffected: parser')"
+expect_fail "L2 understanding 应拒绝缺 tests" bash "$WS" --repo "$UNDERSTANDING_MISSING" understand "$missing_understanding"
+
+UNDERSTANDING_CONFLICT="$(understanding_repo understanding-conflict L1)"
+conflict_understanding="$(evidence "$UNDERSTANDING_CONFLICT" understanding.txt $'result: FAIL\nresult: PASS\nkind: requirements\nacceptance: visible\nnon_goals: none')"
+expect_fail "understanding 应拒绝 FAIL/PASS 冲突" bash "$WS" --repo "$UNDERSTANDING_CONFLICT" understand "$conflict_understanding"
+expect_fail "understanding 应拒绝目录外证据" bash "$WS" --repo "$UNDERSTANDING_CONFLICT" understand ../outside.txt
+
+UNDERSTANDING_L4="$(new_repo understanding-l4)"
+setf "$UNDERSTANDING_L4" level L4
+[ "$(getf "$UNDERSTANDING_L4" understanding.status)" = not-required ] || fail "L4 应自动豁免 understanding"
+
 # check: illegal phase should error
 expect_fail "非法 phase 应拒绝" bash "$WS" --repo "$REPO" set phase 乱写
 

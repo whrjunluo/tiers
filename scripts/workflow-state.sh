@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
-# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|get <field>|set <field> <value>|check|complete}
+# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|understand <evidence>|get <field>|set <field> <value>|check|complete}
 set -euo pipefail
 # 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -13,6 +13,8 @@ VALID_PHASES="brainstorm grill spec plan tdd review business-verify fidelity-ver
 VALID_LEVELS="L0 L1 L2 L3 L4"
 VALID_BOOLEANS="true false"
 VALID_ENVIRONMENTS="real mock n/a"
+VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
+VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
 VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
 
 die(){ echo "✗ $1" >&2; exit 1; }
@@ -192,6 +194,65 @@ requirements_sha256(){
       printf '%s\0%s\0' "$field" "$(yget "$field")"
     done
   } | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
+scope_sha256(){
+  {
+    for field in task level context.target context.sources requirements.business requirements.fidelity requirements.external_review execution.mode execution.objective_sha256 context.branch execution.base_revision; do
+      printf '%s\0%s\0' "$field" "$(yget "$field")"
+    done
+  } | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
+file_sha256(){
+  python3 - "$1" <<'PY'
+import hashlib, sys
+with open(sys.argv[1], "rb") as handle:
+    print(hashlib.sha256(handle.read()).hexdigest())
+PY
+}
+
+understanding_kind_for_level(){
+  case "$1" in
+    L0) printf '%s\n' architecture ;;
+    L1) printf '%s\n' requirements ;;
+    L2) printf '%s\n' impact ;;
+    L3) printf '%s\n' root-cause ;;
+    L4) printf '%s\n' not-required ;;
+    *) return 1 ;;
+  esac
+}
+
+evidence_scalar(){
+  local key="$1" path="$2"
+  awk -v key="$key" '$1==key":"{sub(/^[^:]+:[[:space:]]*/,"");print;exit}' "$path"
+}
+
+reset_understanding(){
+  local status="${1:-pending}"
+  write_field understanding.status "$status"
+  write_field understanding.kind ""
+  write_field understanding.evidence ""
+  write_field understanding.evidence_sha256 ""
+  write_field understanding.scope_sha256 ""
+}
+
+validate_understanding_evidence(){
+  local level="$1" path="$2" expected_kind actual_kind key
+  expected_kind="$(understanding_kind_for_level "$level")" || add_error "无法识别 understanding level: $level"
+  require_single_pass_result understanding "$path"
+  actual_kind="$(evidence_scalar kind "$path")"
+  [ "$actual_kind" = "$expected_kind" ] || add_error "understanding kind 应为 $expected_kind，当前为 ${actual_kind:-空}"
+  case "$level" in
+    L0) required_keys="boundaries migration rollback" ;;
+    L1) required_keys="acceptance non_goals" ;;
+    L2) required_keys="affected tests" ;;
+    L3) required_keys="reproduction root_cause" ;;
+    *) required_keys="" ;;
+  esac
+  for key in $required_keys; do
+    grep -qE "^${key}:[[:space:]]*[^[:space:]]" "$path" || add_error "understanding 缺 ${key}:"
+  done
 }
 
 require_single_pass_result(){
@@ -443,7 +504,36 @@ case "${1:-}" in
       base_revision=unborn
     fi
     write_field execution.base_revision "$base_revision"
+    if [ "$task_level" = L4 ]; then reset_understanding not-required; fi
     echo "✓ 新任务已开始（task=${task_name}, level=${task_level}, phase=brainstorm）" ;;
+  understand)
+    [ -f "$STATE" ] || die "状态文件不存在，先 init"
+    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] understand <evidence>"
+    sealed_at="$(yget completion.completed_at)"
+    is_empty_value "$sealed_at" || die "任务已封存；不得更新 understanding"
+    level="$(yget level)"
+    in_list "$level" "$VALID_LEVELS" || die "先设置合法 level"
+    [ "$level" != L4 ] || die "L4 understanding 为 not-required，无需证据"
+    errors=""
+    for field in task level context.target context.sources; do require_value "$field"; done
+    value="$2"
+    if ! valid_evidence_reference "$value"; then
+      add_error "understanding evidence 必须位于 docs/superpowers/.workflow-evidence/ 且不得包含 ..: $value"
+    else
+      path="$(evidence_path "$value")"
+      if [ ! -s "$path" ]; then
+        add_error "understanding evidence 不存在或为空: $value"
+      else
+        validate_understanding_evidence "$level" "$path"
+      fi
+    fi
+    [ -z "$errors" ] || die "理解度关卡未通过: $errors"
+    write_field understanding.kind "$(understanding_kind_for_level "$level")"
+    write_field understanding.evidence "$value"
+    write_field understanding.evidence_sha256 "$(file_sha256 "$path")"
+    write_field understanding.scope_sha256 "$(scope_sha256)"
+    write_field understanding.status passed
+    echo "✓ 理解度 = PASS（kind=$(understanding_kind_for_level "$level")）" ;;
   get)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     yget "$2" ;;
@@ -463,6 +553,13 @@ case "${1:-}" in
       context.environment) in_list "$value" "$VALID_ENVIRONMENTS" || die "$field 只能是 real/mock/n/a" ;;
     esac
     write_field "$field" "$value"
+    if [ "$field" = level ]; then
+      if [ "$value" = L4 ]; then
+        reset_understanding not-required
+      elif [ "$(yget understanding.status)" = not-required ]; then
+        reset_understanding pending
+      fi
+    fi
     echo "✓ ${field} = ${value}（updated=$(date +%F)）" ;;
   complete)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
@@ -494,5 +591,5 @@ case "${1:-}" in
     if [ "$ph" = done ] || ! is_empty_value "$sealed_at"; then validate_completion sealed; fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
-  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
+  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|understand <evidence>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
 esac
