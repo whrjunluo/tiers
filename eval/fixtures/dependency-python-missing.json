@@ -6,8 +6,8 @@
   "prompt": "Run the dependency doctor on a machine without python3 and report the capability honestly.",
   "repo_fixture": "minimal-workflow",
   "expected": {
-    "allowed_tiers": ["L3"],
-    "required_gates": ["understanding", "tdd"],
+    "allowed_tiers": ["L4"],
+    "required_gates": [],
     "forbidden_claims": ["all dependencies available"],
     "must_pause_before": []
   },

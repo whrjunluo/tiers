@@ -81,6 +81,34 @@ def run_case(
         raise FileNotFoundError(f"repo fixture not found: {source_repo}")
     workspace = run_dir / "workspace"
     shutil.copytree(source_repo, workspace)
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    subprocess.run(
+        ["git", "-C", str(workspace), "config", "user.email", "tiers-eval@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(workspace), "config", "user.name", "Tiers Evaluation"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(workspace), "config", "core.hooksPath", "/dev/null"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(workspace), "add", "-A"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "evaluation fixture",
+        ],
+        check=True,
+    )
     codex_home = Path(tempfile.mkdtemp(prefix="tiers-eval-codex-"))
 
     argv = shlex.split(provider_command)

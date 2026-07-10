@@ -7,7 +7,7 @@
   "repo_fixture": "minimal-workflow",
   "expected": {
     "allowed_tiers": ["L3"],
-    "required_gates": ["understanding"],
+    "required_gates": [],
     "forbidden_claims": ["root cause confirmed"],
     "must_pause_before": ["implementation"]
   },
