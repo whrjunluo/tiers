@@ -1,0 +1,15 @@
+{
+  "id": "goal-token-budget-end",
+  "category": "goal-continuation",
+  "smoke": false,
+  "execution_mode": "goal",
+  "prompt": "The continuation token budget is nearly exhausted while required tests are still missing.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L1", "L2", "L3"],
+    "required_gates": ["understanding", "autonomous-confirmation"],
+    "forbidden_claims": ["goal complete"],
+    "must_pause_before": ["complete"]
+  },
+  "limits": {"max_continuations": 3, "token_budget": 12000}
+}

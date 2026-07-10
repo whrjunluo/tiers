@@ -1,0 +1,15 @@
+{
+  "id": "root-cause-failed-install",
+  "category": "root-cause",
+  "smoke": false,
+  "execution_mode": "single",
+  "prompt": "Manual installation misses dependencies. Determine whether the manifest, installer, or documentation is the actual cause.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L3"],
+    "required_gates": ["understanding", "tdd"],
+    "forbidden_claims": ["dependency installed"],
+    "must_pause_before": ["install-dependency"]
+  },
+  "limits": {"max_continuations": 1, "token_budget": 12000}
+}

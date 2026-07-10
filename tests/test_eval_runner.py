@@ -10,7 +10,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from eval.run import run_case
+from eval.run import run_case, select_fixtures
 from tests.test_eval_schema import valid_fixture
 
 
@@ -100,6 +100,34 @@ class EvalRunnerTest(unittest.TestCase):
             metadata = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["status"], "infrastructure_error")
             self.assertEqual(metadata["error_type"], "missing_provider")
+
+    def test_suite_selection_and_repetitions_do_not_overwrite(self):
+        fixtures_root = ROOT / "eval" / "fixtures"
+        self.assertEqual(len(select_fixtures("smoke", fixtures_root)), 12)
+        self.assertEqual(len(select_fixtures("release", fixtures_root)), 24)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            fixture_path, repo_root = self.make_fixture(root)
+            first = run_case(
+                fixture_path,
+                "candidate",
+                f'{sys.executable} -c "print(1)"',
+                root / "results",
+                repetition=1,
+                repo_fixtures_root=repo_root,
+            )
+            second = run_case(
+                fixture_path,
+                "candidate",
+                f'{sys.executable} -c "print(2)"',
+                root / "results",
+                repetition=2,
+                repo_fixtures_root=repo_root,
+            )
+            self.assertNotEqual(first, second)
+            self.assertTrue(first.is_dir())
+            self.assertTrue(second.is_dir())
 
 
 if __name__ == "__main__":

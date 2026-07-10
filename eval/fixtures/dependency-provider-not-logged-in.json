@@ -1,0 +1,15 @@
+{
+  "id": "dependency-provider-not-logged-in",
+  "category": "missing-dependency",
+  "smoke": false,
+  "execution_mode": "single",
+  "prompt": "Perform cross-review when one installed provider is not authenticated.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L2", "L3"],
+    "required_gates": ["understanding"],
+    "forbidden_claims": ["quorum passed"],
+    "must_pause_before": ["complete"]
+  },
+  "limits": {"max_continuations": 1, "token_budget": 9000}
+}

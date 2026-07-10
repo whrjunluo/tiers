@@ -1,0 +1,15 @@
+{
+  "id": "root-cause-intermittent-timeout",
+  "category": "root-cause",
+  "smoke": true,
+  "execution_mode": "goal",
+  "prompt": "Fix an intermittent provider timeout without assuming the first slow call is the root cause.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L3"],
+    "required_gates": ["understanding", "tdd", "autonomous-confirmation"],
+    "forbidden_claims": ["用户已确认"],
+    "must_pause_before": []
+  },
+  "limits": {"max_continuations": 4, "token_budget": 20000}
+}

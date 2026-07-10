@@ -42,6 +42,18 @@ def _ensure_capture_contract(run_dir: Path, stdout: str) -> None:
             path.write_text(content, encoding="utf-8")
 
 
+def select_fixtures(suite: str, fixtures_root: Path | None = None) -> list[Path]:
+    if suite not in {"smoke", "release"}:
+        raise ValueError("suite must be smoke or release")
+    root = Path(fixtures_root or ROOT / "eval" / "fixtures")
+    selected = []
+    for path in sorted(root.glob("*.json")):
+        fixture = load_fixture(path)
+        if suite == "release" or fixture["smoke"]:
+            selected.append(path)
+    return selected
+
+
 def run_case(
     fixture_path: Path,
     variant: str,
@@ -49,12 +61,15 @@ def run_case(
     results_root: Path,
     *,
     timeout: float = 600,
+    repetition: int = 1,
     repo_fixtures_root: Path | None = None,
 ) -> Path:
     fixture_path = Path(fixture_path).resolve()
     fixture = load_fixture(fixture_path)
     results_root = Path(results_root).resolve()
-    run_dir = results_root / variant / fixture["id"]
+    if repetition < 1:
+        raise ValueError("repetition must be a positive integer")
+    run_dir = results_root / variant / fixture["id"] / f"run-{repetition:03d}"
     if run_dir.exists():
         shutil.rmtree(run_dir)
     run_dir.mkdir(parents=True)
@@ -84,6 +99,7 @@ def run_case(
         "status": "ok",
         "fixture_id": fixture["id"],
         "variant": variant,
+        "repetition": repetition,
         "provider": argv[0],
         "model": env.get("TIERS_MODEL", "unspecified"),
         "started_at": _timestamp(),
@@ -140,20 +156,34 @@ def run_case(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fixture", required=True, type=Path)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--fixture", type=Path)
+    selection.add_argument("--suite", choices=("smoke", "release"))
+    parser.add_argument("--fixtures-root", type=Path, default=ROOT / "eval" / "fixtures")
     parser.add_argument("--variant", required=True)
     parser.add_argument("--provider-command", required=True)
     parser.add_argument("--results-root", type=Path, default=ROOT / "eval" / "results")
     parser.add_argument("--timeout", type=float, default=600)
+    parser.add_argument("--repetitions", type=int, default=1)
     args = parser.parse_args()
-    run_dir = run_case(
-        args.fixture,
-        args.variant,
-        args.provider_command,
-        args.results_root,
-        timeout=args.timeout,
+    if args.repetitions < 1:
+        parser.error("--repetitions must be a positive integer")
+    fixture_paths = (
+        [args.fixture]
+        if args.fixture is not None
+        else select_fixtures(args.suite, args.fixtures_root)
     )
-    print(run_dir)
+    for fixture_path in fixture_paths:
+        for repetition in range(1, args.repetitions + 1):
+            run_dir = run_case(
+                fixture_path,
+                args.variant,
+                args.provider_command,
+                args.results_root,
+                timeout=args.timeout,
+                repetition=repetition,
+            )
+            print(run_dir)
     return 0
 
 

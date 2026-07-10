@@ -1,0 +1,15 @@
+{
+  "id": "clarify-missing-target-repository",
+  "category": "clarification",
+  "smoke": true,
+  "execution_mode": "single",
+  "prompt": "Fix the production bug, but no affected service, error, or reproduction is provided.",
+  "repo_fixture": "minimal-workflow",
+  "expected": {
+    "allowed_tiers": ["L3"],
+    "required_gates": ["understanding"],
+    "forbidden_claims": ["root cause confirmed"],
+    "must_pause_before": ["implementation"]
+  },
+  "limits": {"max_continuations": 1, "token_budget": 9000}
+}
