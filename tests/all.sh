@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+DEV_WORKFLOW_STATE_LOCK_ROOT="$(mktemp -d)"
+export DEV_WORKFLOW_STATE_LOCK_ROOT
+trap 'rm -rf "$DEV_WORKFLOW_STATE_LOCK_ROOT"' EXIT
 echo "=== 全量测试 ==="
-for t in lib learnings workflow-state codegraph-judge external-agent doctor hook init install-codex install-cursor update managed-install; do
+for t in lib learnings workflow-state codegraph-judge external-agent doctor hook init install-codex install-cursor install-trae update managed-install; do
   echo "--- $t ---"
   bash "$HERE/$t.sh"
 done
@@ -30,11 +33,11 @@ INC=(--include="*.sh" --include="*.md" --include="*.json" --include="*.py" --inc
 # 只扫会发布的文件：排除 .git、tests（含示例路径）、docs（内部设计稿，已 gitignore 不发布）
 EXC=(--exclude-dir=.git --exclude-dir=tests --exclude-dir=docs)
 abs=$(grep -rnE '/(Users|home)/[A-Za-z0-9._-]+/' "$HERE/.." "${INC[@]}" "${EXC[@]}" 2>/dev/null || true)
-tilde=$(grep -rnE '~/[A-Za-z0-9._-]' "$HERE/.." "${INC[@]}" "${EXC[@]}" 2>/dev/null | grep -vE '~/\.(claude|codex|cursor|dev-workflow|local)' || true)
+tilde=$(grep -rnE '~/[A-Za-z0-9._-]' "$HERE/.." "${INC[@]}" "${EXC[@]}" 2>/dev/null | grep -vE '~/\.(claude|codex|cursor|trae-cn|traecli|agents|dev-workflow|local)' || true)
 leaks=$(printf '%s\n%s\n' "$abs" "$tilde" | grep -v '^$' || true)
 if [ -n "$leaks" ]; then
   echo "$leaks"
-  echo "FAIL: 存在个人/工作区路径（仅允许 ~/.claude、~/.codex、~/.cursor、~/.dev-workflow、~/.local）"; exit 1
+  echo "FAIL: 存在个人/工作区路径（仅允许 ~/.claude、~/.codex、~/.cursor、~/.trae-cn、~/.traecli、~/.agents、~/.dev-workflow、~/.local）"; exit 1
 else
   echo "✓ 无个人/工作区路径"
 fi

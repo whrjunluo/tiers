@@ -89,6 +89,11 @@ set -euo pipefail
 printf 'cursor:%s:root=%s\\n' "$*" "${DEV_WORKFLOW_PLUGIN_ROOT:-}" >> "$TEST_LOG"
 [ "${FAIL_CURSOR:-0}" != 1 ] || exit 42
 """,
+    "install-trae": """#!/usr/bin/env bash
+set -euo pipefail
+printf 'trae:%s:root=%s\\n' "$*" "${DEV_WORKFLOW_PLUGIN_ROOT:-}" >> "$TEST_LOG"
+[ "${FAIL_TRAE:-0}" != 1 ] || exit 44
+""",
     "doctor": """#!/usr/bin/env bash
 set -euo pipefail
 printf 'doctor:%s:root=%s\\n' "$*" "${DEV_WORKFLOW_PLUGIN_ROOT:-}" >> "$TEST_LOG"
@@ -231,7 +236,7 @@ import json
 import sys
 state = json.load(open(sys.argv[1], encoding="utf-8"))
 assert state["channel"] == "edge", state
-assert state["platforms"] == ["codex", "cursor"], state
+assert state["platforms"] == ["codex", "cursor", "trae"], state
 assert state["active_commit"] == sys.argv[2], state
 PY
 
@@ -321,10 +326,14 @@ assert_state platforms codex
 dev-workflow install cursor >/dev/null
 assert_state platforms codex,cursor
 
+dev-workflow install trae >/dev/null
+assert_state platforms codex,cursor,trae
+
 : > "$LOG"
 dev-workflow install all --install-deps >/dev/null
 assert_contains "$(cat "$LOG")" "codex:--yes --install-deps"
 assert_contains "$(cat "$LOG")" "cursor:--yes --install-deps"
+assert_contains "$(cat "$LOG")" "trae:--yes --install-deps"
 
 : > "$LOG"
 dev-workflow doctor --repo "$OUTSIDE" --install-deps >/dev/null

@@ -257,6 +257,7 @@ class ManagedInstaller:
         required_files = (
             "bin/install-codex",
             "bin/install-cursor",
+            "bin/install-trae",
             "bin/doctor",
             "bin/dev-workflow",
             "skills/dev-workflow/SKILL.md",
@@ -374,7 +375,7 @@ class ManagedInstaller:
         env = dict(os.environ)
         env["DEV_WORKFLOW_PLUGIN_ROOT"] = str(self.paths.current)
         for platform in platforms:
-            if platform not in ("codex", "cursor"):
+            if platform not in ("codex", "cursor", "trae"):
                 raise ManagedInstallError(f"Unsupported platform: {platform}")
             args = ["bash", str(plugin_root / "bin" / f"install-{platform}"), "--yes"]
             if install_deps:
@@ -405,8 +406,8 @@ class ManagedInstaller:
         normalized_platforms = sorted(set(platforms))
         if not normalized_platforms:
             raise ManagedInstallError("At least one platform is required for activation")
-        if any(platform not in ("codex", "cursor") for platform in normalized_platforms):
-            raise ManagedInstallError("Platforms must contain only codex and cursor")
+        if any(platform not in ("codex", "cursor", "trae") for platform in normalized_platforms):
+            raise ManagedInstallError("Platforms must contain only codex, cursor, and trae")
 
         manifest_version = self.validate_candidate(candidate, revision)
         previous_state = self.load_state()
@@ -503,6 +504,8 @@ def print_reload_guidance(platforms: Sequence[str]) -> None:
         print("Restart Codex or open a new conversation to reload plugin hooks and skills.")
     if "cursor" in platforms:
         print("Reload Window or restart Cursor to reload skills.")
+    if "trae" in platforms:
+        print("Restart TRAE IDE or TRAE CLI to reload the skill index.")
 
 
 def command_update(manager: ManagedInstaller, channel: Optional[str], install_deps: bool) -> None:
@@ -526,7 +529,7 @@ def command_update(manager: ManagedInstaller, channel: Optional[str], install_de
 
 def command_install(manager: ManagedInstaller, target: str, install_deps: bool) -> None:
     state = require_state(manager)
-    requested = ["codex", "cursor"] if target == "all" else [target]
+    requested = ["codex", "cursor", "trae"] if target == "all" else [target]
     platforms = sorted(set(state["platforms"]) | set(requested))
     revision = Revision(
         str(state["channel"]), str(state["active_ref"]), str(state["active_commit"])
@@ -555,12 +558,24 @@ def command_doctor(manager: ManagedInstaller, doctor_args: Sequence[str]) -> int
     return completed.returncode
 
 
+def command_init(manager: ManagedInstaller, init_args: Sequence[str]) -> int:
+    require_state(manager)
+    if not manager.paths.current.is_symlink():
+        raise ManagedInstallError("Managed current version is missing; run dev-workflow update")
+    env = dict(os.environ)
+    env["DEV_WORKFLOW_PLUGIN_ROOT"] = str(manager.paths.current)
+    completed = subprocess.run(
+        ["bash", str(manager.paths.current / "bin/init"), *init_args], env=env
+    )
+    return completed.returncode
+
+
 def command_bootstrap(manager: ManagedInstaller, arguments: Sequence[str]) -> None:
     parser = argparse.ArgumentParser(prog="dev-workflow _bootstrap", add_help=False)
     parser.add_argument("--channel", required=True, choices=("stable", "edge"))
     parser.add_argument("--ref", required=True)
     parser.add_argument("--commit", required=True)
-    parser.add_argument("--platform", required=True, choices=("codex", "cursor", "all"))
+    parser.add_argument("--platform", required=True, choices=("codex", "cursor", "trae", "all"))
     parser.add_argument("--install-deps", action="store_true")
     parsed = parser.parse_args(list(arguments))
 
@@ -575,7 +590,7 @@ def command_bootstrap(manager: ManagedInstaller, arguments: Sequence[str]) -> No
 
     revision = Revision(parsed.channel, parsed.ref, parsed.commit)
     candidate = manager.prepare_candidate(revision)
-    requested = ["codex", "cursor"] if parsed.platform == "all" else [parsed.platform]
+    requested = ["codex", "cursor", "trae"] if parsed.platform == "all" else [parsed.platform]
     existing = manager.load_state().get("platforms", [])
     platforms = sorted(set(existing) | set(requested))
     result = manager.activate_candidate(
@@ -599,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--install-deps", action="store_true")
 
     install = subparsers.add_parser("install", help="add or refresh a platform")
-    install.add_argument("platform", choices=("codex", "cursor", "all"))
+    install.add_argument("platform", choices=("codex", "cursor", "trae", "all"))
     install.add_argument("--install-deps", action="store_true")
     subparsers.add_parser("doctor", help="run the active installation doctor")
     return parser

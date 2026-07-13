@@ -49,7 +49,8 @@ description: Use when a development task could change code, behavior, configurat
 2. `CODEX_PLUGIN_ROOT`
 3. `CLAUDE_PLUGIN_ROOT`
 4. `CURSOR_PLUGIN_ROOT`
-5. 若是从本文件路径推断，则从 `skills/dev-workflow/SKILL.md` 上溯两级到仓库根目录
+5. `TRAE_PLUGIN_ROOT`
+6. 若是从本文件路径推断，则从 `skills/dev-workflow/SKILL.md` 上溯两级到仓库根目录
 
 脚本自身也按同样规则自动推断，Codex 环境不要依赖 Claude 专属变量。
 

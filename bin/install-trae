@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${TRAE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}"
+TRAE_HOME_DIR="${TRAE_HOME:-$HOME/.trae-cn}"
+YES=0
+INSTALL_DEPS=0
+
+while [ "${1:-}" ]; do
+  case "$1" in
+    --trae-home) TRAE_HOME_DIR="$2"; shift 2 ;;
+    --yes|-y) YES=1; shift ;;
+    --install-deps) INSTALL_DEPS=1; shift ;;
+    *) echo "Unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+die() { echo "✗ $1" >&2; exit 1; }
+
+[ -d "$PLUGIN_ROOT/skills/dev-workflow" ] || die "Missing skills/dev-workflow in $PLUGIN_ROOT"
+[ -d "$PLUGIN_ROOT/skills/grill-me" ] || die "Missing skills/grill-me in $PLUGIN_ROOT"
+[ -d "$PLUGIN_ROOT/skills/external-agent" ] || die "Missing skills/external-agent in $PLUGIN_ROOT"
+
+timestamp() { date +%Y%m%d-%H%M%S; }
+
+link_or_backup() {
+  local target="$1" dest="$2" backup_root="$3"
+  mkdir -p "$(dirname "$dest")" "$backup_root"
+  if [ -L "$dest" ] || [ ! -e "$dest" ]; then
+    ln -sfn "$target" "$dest"
+    return
+  fi
+
+  local backup="$backup_root/$(basename "$dest").$(timestamp)"
+  mv "$dest" "$backup"
+  ln -sfn "$target" "$dest"
+  echo "ℹ Existing $(basename "$dest") moved to $backup"
+}
+
+install_links() {
+  local skills_dir="$TRAE_HOME_DIR/skills"
+  local backup_root="$TRAE_HOME_DIR/skills-backup"
+
+  mkdir -p "$skills_dir"
+  link_or_backup "$PLUGIN_ROOT/skills/dev-workflow" "$skills_dir/dev-workflow" "$backup_root"
+  link_or_backup "$PLUGIN_ROOT/skills/grill-me" "$skills_dir/grill-me" "$backup_root"
+  link_or_backup "$PLUGIN_ROOT/skills/external-agent" "$skills_dir/external-agent" "$backup_root"
+}
+
+if [ "$YES" != 1 ]; then
+  echo "This will install dev-workflow into TRAE home: $TRAE_HOME_DIR"
+  read -r -p "Continue? [y/N] " answer
+  [ "$answer" = "y" ] || [ "$answer" = "Y" ] || exit 0
+fi
+
+install_links
+
+DEV_WORKFLOW_PLUGIN_ROOT="$PLUGIN_ROOT" "$PLUGIN_ROOT/scripts/learnings.sh" ready >/dev/null || true
+
+have_skill_dir() {
+  find "$TRAE_HOME_DIR/skills" "$HOME/.traecli/skills" "$HOME/.agents/skills" "$HOME/.claude" "$HOME/.codex/skills" \
+    -maxdepth 4 -type d -name "$1" 2>/dev/null | grep -q .
+}
+add_companion() {
+  echo "ℹ 未检测到 $2 —— TRAE 安装： npx skills@latest add $1"
+  if [ "$INSTALL_DEPS" = 1 ]; then
+    echo "→ 安装 $2 …"
+    npx -y skills@latest add "$1" || echo "  ⚠ 自动安装失败，请手动跑上面的命令。"
+  fi
+}
+have_skill_dir '*superpowers*' || add_companion obra/superpowers "superpowers（L1 完整 skill 链）"
+have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-docs（内置 grill-me 的可选升级）"
+
+TRAE_HOME="$TRAE_HOME_DIR" "$PLUGIN_ROOT/bin/doctor" --platform trae || true
+
+echo "✓ Installed dev-workflow for TRAE"
+echo "✓ Plugin: $PLUGIN_ROOT"
+echo "✓ Skills: $TRAE_HOME_DIR/skills/dev-workflow, $TRAE_HOME_DIR/skills/grill-me, $TRAE_HOME_DIR/skills/external-agent"
+echo "✓ Data:   ${DEV_WORKFLOW_DATA:-$HOME/.dev-workflow}（跨工具共享）"
+echo "Restart TRAE IDE or TRAE CLI to reload the skill index."
