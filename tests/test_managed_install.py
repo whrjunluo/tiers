@@ -252,6 +252,24 @@ class CandidateAndActivationTests(unittest.TestCase):
         self.assertFalse(os.path.lexists(self.paths.current))
         self.assertFalse(self.paths.state_file.exists())
 
+    def test_failed_first_activation_restores_preexisting_command_symlink(self):
+        candidate = self.make_candidate()
+        foreign_command = self.root / "previous-dev-workflow"
+        foreign_command.write_text("previous\n", encoding="utf-8")
+        self.paths.bin_dir.mkdir(parents=True)
+        self.paths.command_link.symlink_to(foreign_command)
+        original_target = os.readlink(self.paths.command_link)
+        manager = ManagedInstaller(self.paths, "https://example.test/tiers.git")
+        manager.validate_candidate = mock.Mock(return_value="0.7.0")
+        manager.run_platform_installers = mock.Mock()
+        manager.run_doctor = mock.Mock(side_effect=ManagedInstallError("simulated doctor failure"))
+
+        with self.assertRaisesRegex(ManagedInstallError, "simulated doctor failure"):
+            manager.activate_candidate(candidate, self.revision, ["codex"])
+
+        self.assertTrue(self.paths.command_link.is_symlink())
+        self.assertEqual(original_target, os.readlink(self.paths.command_link))
+
 
 if __name__ == "__main__":
     unittest.main()

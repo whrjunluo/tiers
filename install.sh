@@ -55,7 +55,7 @@ else
     die "managed repository is invalid: $SOURCE_GIT"
   git --git-dir "$SOURCE_GIT" remote set-url origin "$REPO_URL"
 fi
-git --git-dir "$SOURCE_GIT" fetch --prune origin \
+git --git-dir "$SOURCE_GIT" fetch --prune --prune-tags origin \
   +refs/heads/main:refs/remotes/origin/main \
   +refs/tags/*:refs/tags/*
 

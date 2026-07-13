@@ -16,7 +16,7 @@ ln -sfn "$SBOX/stale-cursor" "$CURSOR_HOME/skills/dev-workflow"
 out="$(bash "$HERE/bin/update" --codex --cursor)"
 [ "$(readlink "$CODEX_HOME/skills/dev-workflow")" = "$HERE/skills/dev-workflow" ] || { echo "FAIL: Codex skill link not refreshed"; exit 1; }
 [ "$(readlink "$CURSOR_HOME/skills/dev-workflow")" = "$HERE/skills/dev-workflow" ] || { echo "FAIL: Cursor skill link not refreshed"; exit 1; }
-echo "$out" | grep -q 'Updated dev-workflow 0.6.0' || { echo "FAIL: update summary missing"; echo "$out"; exit 1; }
+echo "$out" | grep -q 'Updated dev-workflow 0.7.0' || { echo "FAIL: update summary missing"; echo "$out"; exit 1; }
 echo "$out" | grep -q 'Restart Codex' || { echo "FAIL: reload guidance missing"; echo "$out"; exit 1; }
 bash "$HERE/bin/update" --codex >/dev/null || { echo "FAIL: Codex-only update should exit zero"; exit 1; }
 grep -q 'bin/update --codex' "$HERE/README.md" || { echo "FAIL: README missing Codex update command"; exit 1; }

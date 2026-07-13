@@ -152,6 +152,7 @@ class ManagedInstaller:
                 str(self.paths.source_git),
                 "fetch",
                 "--prune",
+                "--prune-tags",
                 "origin",
                 "+refs/heads/main:refs/remotes/origin/main",
                 "+refs/tags/*:refs/tags/*",
@@ -349,7 +350,10 @@ class ManagedInstaller:
             raise ManagedInstallError(
                 f"Refusing to replace non-symlink command: {self.paths.command_link}"
             )
-        target = self.paths.current / "bin/dev-workflow"
+        self._replace_command_link(self.paths.current / "bin/dev-workflow")
+
+    def _replace_command_link(self, target: Path) -> None:
+        self.paths.bin_dir.mkdir(parents=True, exist_ok=True)
         temporary = self.paths.bin_dir / f".dev-workflow.{os.getpid()}"
         try:
             if os.path.lexists(temporary):
@@ -375,16 +379,20 @@ class ManagedInstaller:
             args = ["bash", str(plugin_root / "bin" / f"install-{platform}"), "--yes"]
             if install_deps:
                 args.append("--install-deps")
-            self.runner(args, env=env)
+            output = self.runner(args, env=env)
+            if output:
+                print(output, end="" if output.endswith("\n") else "\n")
 
     def run_doctor(self, plugin_root: Path, platforms: Sequence[str]) -> None:
         env = dict(os.environ)
         env["DEV_WORKFLOW_PLUGIN_ROOT"] = str(self.paths.current)
         for platform in platforms:
-            self.runner(
+            output = self.runner(
                 ["bash", str(plugin_root / "bin/doctor"), "--platform", platform],
                 env=env,
             )
+            if output:
+                print(output, end="" if output.endswith("\n") else "\n")
 
     def activate_candidate(
         self,
@@ -404,6 +412,11 @@ class ManagedInstaller:
         previous_state = self.load_state()
         previous_target = self.paths.current.resolve() if self.paths.current.is_symlink() else None
         command_existed = os.path.lexists(self.paths.command_link)
+        previous_command_target = (
+            Path(os.readlink(self.paths.command_link))
+            if self.paths.command_link.is_symlink()
+            else None
+        )
         self._replace_current(candidate)
         try:
             self.ensure_global_command()
@@ -434,7 +447,9 @@ class ManagedInstaller:
                         self.run_platform_installers(previous_target, previous_platforms)
                     except Exception:
                         pass
-            if not command_existed and os.path.lexists(self.paths.command_link):
+            if previous_command_target is not None:
+                self._replace_command_link(previous_command_target)
+            elif not command_existed and os.path.lexists(self.paths.command_link):
                 self.paths.command_link.unlink()
             raise
 
