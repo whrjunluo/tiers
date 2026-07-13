@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,6 +23,7 @@ class ManagedInstallError(RuntimeError):
 
 CommandRunner = Callable[..., str]
 SEMVER_TAG = re.compile(r"^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+DEFAULT_REPO_URL = "https://github.com/whrjunluo/tiers.git"
 
 
 def run_command(
@@ -43,7 +46,8 @@ def run_command(
         raise ManagedInstallError(f"Required command not found: {args[0]}") from exc
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "command failed").strip()
-        raise ManagedInstallError(f"{args[0]} failed: {detail}") from exc
+        command = " ".join(str(arg) for arg in args)
+        raise ManagedInstallError(f"Command failed ({exc.returncode}): {command}: {detail}") from exc
     return completed.stdout
 
 
@@ -339,6 +343,23 @@ class ManagedInstaller:
                 raise ManagedInstallError(f"Managed current path is not a symlink: {self.paths.current}")
             self.paths.current.unlink()
 
+    def ensure_global_command(self) -> None:
+        self.paths.bin_dir.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(self.paths.command_link) and not self.paths.command_link.is_symlink():
+            raise ManagedInstallError(
+                f"Refusing to replace non-symlink command: {self.paths.command_link}"
+            )
+        target = self.paths.current / "bin/dev-workflow"
+        temporary = self.paths.bin_dir / f".dev-workflow.{os.getpid()}"
+        try:
+            if os.path.lexists(temporary):
+                temporary.unlink()
+            temporary.symlink_to(target)
+            os.replace(temporary, self.paths.command_link)
+        finally:
+            if os.path.lexists(temporary):
+                temporary.unlink()
+
     def run_platform_installers(
         self,
         plugin_root: Path,
@@ -382,8 +403,10 @@ class ManagedInstaller:
         manifest_version = self.validate_candidate(candidate, revision)
         previous_state = self.load_state()
         previous_target = self.paths.current.resolve() if self.paths.current.is_symlink() else None
+        command_existed = os.path.lexists(self.paths.command_link)
         self._replace_current(candidate)
         try:
+            self.ensure_global_command()
             self.run_platform_installers(
                 candidate, normalized_platforms, install_deps=install_deps
             )
@@ -396,6 +419,7 @@ class ManagedInstaller:
                     "active_ref": revision.ref,
                     "active_commit": revision.commit,
                     "manifest_version": manifest_version,
+                    "reload_required": True,
                     "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 }
             )
@@ -410,4 +434,141 @@ class ManagedInstaller:
                         self.run_platform_installers(previous_target, previous_platforms)
                     except Exception:
                         pass
+            if not command_existed and os.path.lexists(self.paths.command_link):
+                self.paths.command_link.unlink()
             raise
+
+
+def manager_from_env(env: Mapping[str, str] = os.environ) -> ManagedInstaller:
+    paths = InstallPaths.from_env(env)
+    repo_url = env.get("DEV_WORKFLOW_REPO_URL", DEFAULT_REPO_URL)
+    return ManagedInstaller(paths, repo_url)
+
+
+def require_state(manager: ManagedInstaller) -> dict[str, Any]:
+    state = manager.load_state()
+    required = (
+        "channel",
+        "platforms",
+        "active_ref",
+        "active_commit",
+        "manifest_version",
+    )
+    missing = [field for field in required if field not in state]
+    if missing:
+        raise ManagedInstallError(
+            "No complete managed installation was found; run install.sh first"
+        )
+    return state
+
+
+def print_status(manager: ManagedInstaller) -> None:
+    state = require_state(manager)
+    print("dev-workflow managed installation")
+    print(f"Install root: {manager.paths.install_root}")
+    print(f"Channel: {state['channel']}")
+    print(f"Active ref: {state['active_ref']}")
+    print(f"Active commit: {state['active_commit']}")
+    print(f"Manifest version: {state['manifest_version']}")
+    print(f"Platforms: {', '.join(state['platforms'])}")
+    print(f"Reload required: {'yes' if state.get('reload_required') else 'no'}")
+
+
+def warn_path(manager: ManagedInstaller) -> None:
+    path_entries = [Path(entry).expanduser() for entry in os.environ.get("PATH", "").split(os.pathsep)]
+    if manager.paths.bin_dir not in path_entries:
+        print(
+            f"Warning: {manager.paths.bin_dir} is not in PATH; add it to run dev-workflow globally.",
+            file=sys.stderr,
+        )
+
+
+def print_reload_guidance(platforms: Sequence[str]) -> None:
+    if "codex" in platforms:
+        print("Restart Codex or open a new conversation to reload plugin hooks and skills.")
+    if "cursor" in platforms:
+        print("Reload Window or restart Cursor to reload skills.")
+
+
+def command_update(manager: ManagedInstaller, channel: Optional[str], install_deps: bool) -> None:
+    state = require_state(manager)
+    selected_channel = channel or str(state["channel"])
+    platforms = list(state["platforms"])
+    with manager.update_lock():
+        manager.ensure_repository()
+        revision = manager.resolve_revision(selected_channel)
+        candidate = manager.prepare_candidate(revision)
+        result = manager.activate_candidate(
+            candidate, revision, platforms, install_deps=install_deps
+        )
+    print(
+        f"Updated dev-workflow to {result['manifest_version']} "
+        f"({result['channel']}, {result['active_commit'][:12]})."
+    )
+    warn_path(manager)
+    print_reload_guidance(platforms)
+
+
+def command_install(manager: ManagedInstaller, target: str, install_deps: bool) -> None:
+    state = require_state(manager)
+    requested = ["codex", "cursor"] if target == "all" else [target]
+    platforms = sorted(set(state["platforms"]) | set(requested))
+    revision = Revision(
+        str(state["channel"]), str(state["active_ref"]), str(state["active_commit"])
+    )
+    if not manager.paths.current.is_symlink():
+        raise ManagedInstallError("Managed current version is missing; run dev-workflow update")
+    candidate = manager.paths.current.resolve()
+    with manager.update_lock():
+        result = manager.activate_candidate(
+            candidate, revision, platforms, install_deps=install_deps
+        )
+    print(f"Installed dev-workflow {result['manifest_version']} for {', '.join(platforms)}.")
+    warn_path(manager)
+    print_reload_guidance(platforms)
+
+
+def command_doctor(manager: ManagedInstaller, doctor_args: Sequence[str]) -> int:
+    require_state(manager)
+    if not manager.paths.current.is_symlink():
+        raise ManagedInstallError("Managed current version is missing; run dev-workflow update")
+    env = dict(os.environ)
+    env["DEV_WORKFLOW_PLUGIN_ROOT"] = str(manager.paths.current)
+    completed = subprocess.run(
+        ["bash", str(manager.paths.current / "bin/doctor"), *doctor_args], env=env
+    )
+    return completed.returncode
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dev-workflow")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("status", help="show the active managed installation")
+
+    update = subparsers.add_parser("update", help="update recorded platforms")
+    update.add_argument("--channel", choices=("stable", "edge"))
+    update.add_argument("--install-deps", action="store_true")
+
+    install = subparsers.add_parser("install", help="add or refresh a platform")
+    install.add_argument("platform", choices=("codex", "cursor", "all"))
+    install.add_argument("--install-deps", action="store_true")
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    arguments = list(argv if argv is not None else sys.argv[1:])
+    manager = manager_from_env()
+    try:
+        if arguments and arguments[0] == "doctor":
+            return command_doctor(manager, arguments[1:])
+        parsed = build_parser().parse_args(arguments)
+        if parsed.command == "status":
+            print_status(manager)
+        elif parsed.command == "update":
+            command_update(manager, parsed.channel, parsed.install_deps)
+        elif parsed.command == "install":
+            command_install(manager, parsed.platform, parsed.install_deps)
+        return 0
+    except ManagedInstallError as exc:
+        print(f"dev-workflow: {exc}", file=sys.stderr)
+        return 1
