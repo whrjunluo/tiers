@@ -33,46 +33,81 @@
 - 装完**完全重启 Claude Code**（退出进程重开，不只是新开对话），让 skill 与 hook 加载。
 - 验证：`/` 菜单出现 `dev-workflow:dev-workflow`、`dev-workflow:grill-me`、`dev-workflow:external-agent`。
 
-### Codex（从源码安装）
+### Codex（一行安装）
 
 ```bash
-git clone https://github.com/whrjunluo/tiers.git
-cd tiers
-bash bin/install-codex
+curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
+  | bash -s -- --codex
 ```
 
-`install-codex` 是**机器级一次性安装**，会：把仓库注册为 Codex 本地 marketplace、在 `config.toml` 启用插件、把 `dev-workflow`、`grill-me` 与 `external-agent` 三个 skill 链接进 `$CODEX_HOME/skills/`（默认 `~/.codex`，旧同名 skill 先备份）、初始化全局数据区。装完**重启 Codex 或新开会话**。
+默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和三个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
 
-加 `--install-deps` 会**一并把伴侣 skill 装好**（Codex 走 skill 文件，非 `/plugin`）：
+如果 `~/.local/bin` 不在 `PATH`，安装器会给出提示；加入后可在任意目录运行 `dev-workflow`。装完**重启 Codex 或新开会话**。加 `--install-deps` 会一并安装可脚本化的伴侣 skill：
 
 ```bash
-bash bin/install-codex --install-deps
-# 自动 npx skills add：obra/superpowers（L1 完整链）、mattpocock/skills（grill-with-docs）
+curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
+  | bash -s -- --codex --install-deps
 ```
 
-不加则只打印这两条命令，让你手动决定。
+不加则只打印依赖建议，让你手动决定。
 
-### Cursor（从源码安装）
+### Cursor（一行安装）
 
 ```bash
-git clone https://github.com/whrjunluo/tiers.git
-cd tiers
-bash bin/install-cursor
+curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
+  | bash -s -- --cursor
 ```
 
-`install-cursor` 是**机器级一次性安装**，会：把 `dev-workflow`、`grill-me`、`external-agent` 三个 skill 链接进 `~/.cursor/skills/`（旧同名 skill 先备份）、初始化跨工具统一的全局数据区。装完 **Reload Window 或完全重启 Cursor**，让 skill 索引重新加载。
+同时安装 Codex 和 Cursor，或显式跟踪最新 `main`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
+  | bash -s -- --all --channel edge
+```
+
+`stable` 只接受正式 semver tag，找不到 release 时直接失败，不会静默改装 edge。Cursor 安装会把三个内置 skill 链接进 `~/.cursor/skills/`；装完 **Reload Window 或完全重启 Cursor**。
 
 - 验证：Agent 里输入 `/` 能看到 `dev-workflow` / `grill-me` / `external-agent`，或直接描述开发需求触发自动判级。
 - 同样支持 `--install-deps` 一并安装伴侣 skill（`npx skills add`）。
 - **关于 hook**：Cursor 的 `beforeSubmitPrompt`（对应 Claude 的 `UserPromptSubmit`）只能放行/拦截、**不能向模型注入上下文**，故不安装"判级纠正提醒"hook。该能力由常驻的 `dev-workflow` skill 兜底——判级被纠正时 Agent 会主动用 `learnings.sh` 记录，**进化功能完整**，仅少了 Claude/Codex 上那层自动提醒。
 
-> Cursor 也认 `.cursor-plugin/plugin.json`，所以本仓库同时是一个合法的 Cursor 插件；若日后上架 Cursor Marketplace 或用本地插件目录（`~/.cursor/plugins/local/`）安装，同一份 `skills/` 可直接复用。
+> Cursor 也认 `.cursor-plugin/plugin.json`，所以本仓库同时是一个合法的 Cursor 插件；若日后上架 Cursor Marketplace 或用本地插件目录（`~/.cursor/plugins/local/`）安装，同一份 `skills/` 可直接复用。Claude Code 不由这个安装器管理，继续使用上面的 Marketplace 流程。
 
-### 更新本机安装
+### 检查后再安装
 
-源码 checkout 已经是目标版本时，用一个命令刷新插件缓存和 skill 软链：
+不想直接 pipe 到 shell 时，先下载检查：
 
 ```bash
+curl -fsSLO https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh
+less install.sh
+bash install.sh --codex
+```
+
+安装器需要 `bash`、`git` 和 `python3`。可用 `DEV_WORKFLOW_REPO_URL`、`DEV_WORKFLOW_INSTALL_ROOT`、`DEV_WORKFLOW_BIN_DIR` 覆盖远端和安装路径；不会编辑或迁移 `~/.dev-workflow/` 中的学习记录与 provider 健康数据。
+
+### 更新受管安装
+
+以下命令可在任意目录运行：
+
+```bash
+dev-workflow status                    # 离线查看 channel、版本、commit、平台
+dev-workflow update                    # 按已记录 channel 更新已安装平台
+dev-workflow update --channel edge     # 切换到 origin/main
+dev-workflow update --channel stable   # 切回最新正式 release
+dev-workflow install cursor            # 在现有安装上增加 Cursor
+dev-workflow install all --install-deps
+dev-workflow doctor --repo <你的项目路径>
+```
+
+候选版本会先校验三个 manifest、Git commit、tag/version 和必需文件，再原子切换 `current`。平台安装或 doctor 失败时恢复旧版本和旧状态；旧版本目录保留用于诊断。成功更新不会删除 `~/.dev-workflow/` 数据，完成后按提示重启 Codex 或 Reload Window。
+
+### 从源码维护
+
+贡献者或已有源码 checkout 仍可直接使用仓库脚本：
+
+```bash
+bash bin/install-codex --install-deps
+bash bin/install-cursor
 bash bin/update --codex          # 只更新 Codex
 bash bin/update --cursor         # 只更新 Cursor
 bash bin/update --all            # 两端都更新
@@ -84,13 +119,15 @@ bash bin/update --all            # 两端都更新
 bash bin/update --pull --codex
 ```
 
-更新命令从 plugin manifest 读取版本、重建对应缓存链接，并保留 `~/.dev-workflow/` 中的学习记录和 provider 健康状态。完成后重启 Codex/新开会话，或在 Cursor 执行 Reload Window。
+`bin/update --pull` 只用于源码 checkout；普通用户使用全局 `dev-workflow update`。两条路径都会保留 `~/.dev-workflow/` 中的学习记录和 provider 健康状态。
 
-安装后可随时跑 doctor 看当前能力等级：
+源码 checkout 的 doctor 仍可直接运行：
 
 ```bash
 bash bin/doctor --repo <你的项目路径>
 ```
+
+首个 stable release 的维护顺序是：实现合并并通过 CI/外部评审后，在合并 commit 上创建 annotated `v0.7.0` tag，再创建 GitHub Release，最后用干净临时 HOME 跑一次 GitHub stable bootstrap。tag 创建前 stable 会明确失败，不会退回 `main`。
 
 ---
 

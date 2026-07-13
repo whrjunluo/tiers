@@ -40,6 +40,23 @@ print(Path(sys.argv[1]).resolve())
 PY
 }
 
+release_versions="$(python3 - "$ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+manifests = (
+    ".codex-plugin/plugin.json",
+    ".cursor-plugin/plugin.json",
+    ".claude-plugin/plugin.json",
+)
+print(",".join(json.loads((root / path).read_text(encoding="utf-8"))["version"] for path in manifests))
+PY
+)"
+[ "$release_versions" = "0.7.0,0.7.0,0.7.0" ] || \
+  fail "release manifests must all be 0.7.0, found $release_versions"
+
 python3 - "$ROOT" "$SOURCE" <<'PY'
 import json
 import shutil
