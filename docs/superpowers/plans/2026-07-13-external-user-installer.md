@@ -25,11 +25,11 @@
 - Create: `scripts/managed_install.py`
 - Create: `tests/test_managed_install.py`
 
-- [ ] Add unit tests for semantic-tag filtering and ordering (`v0.7.0` beats `v0.6.9`; prerelease and malformed tags are ignored), stable/edge revision selection, default install paths, and atomic JSON state round-tripping with unknown fields preserved.
-- [ ] Run `python3 -m unittest tests.test_managed_install -v` and confirm it fails because the manager module does not exist.
-- [ ] Implement `InstallPaths`, command execution helpers, repository initialization/fetching, `resolve_revision(channel)`, state loading, and atomic state writing using only the Python standard library.
-- [ ] Run `python3 -m unittest tests.test_managed_install -v` and confirm the new primitive tests pass.
-- [ ] Commit with `git add scripts/managed_install.py tests/test_managed_install.py && git commit -m "feat: add managed install primitives"`.
+- [x] Add unit tests for semantic-tag filtering and ordering (`v0.7.0` beats `v0.6.9`; prerelease and malformed tags are ignored), stable/edge revision selection, default install paths, and atomic JSON state round-tripping with unknown fields preserved.
+- [x] Run `python3 -m unittest tests.test_managed_install -v` and confirm it fails because the manager module does not exist.
+- [x] Implement `InstallPaths`, command execution helpers, repository initialization/fetching, `resolve_revision(channel)`, state loading, and atomic state writing using only the Python standard library.
+- [x] Run `python3 -m unittest tests.test_managed_install -v` and confirm the new primitive tests pass.
+- [x] Commit with `git add scripts/managed_install.py tests/test_managed_install.py && git commit -m "feat: add managed install primitives"`.
 
 ### Task 2: Candidate validation, activation, and rollback
 
