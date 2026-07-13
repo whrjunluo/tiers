@@ -37,12 +37,12 @@
 - Modify: `scripts/managed_install.py`
 - Modify: `tests/test_managed_install.py`
 
-- [ ] Add unit tests for matching plugin manifest versions, required scripts and bundled skill files, checked-out commit equality, stable tag/version equality, atomic `current` replacement, first-install failure cleanup, and restoration of the previous symlink and state after a simulated platform or doctor failure.
-- [ ] Run `python3 -m unittest tests.test_managed_install -v` and confirm the new tests fail at the missing validation and activation interfaces.
-- [ ] Implement candidate worktree creation/reuse, `validate_candidate`, mkdir-based update locking, temporary-symlink activation, platform command construction, doctor execution, state commit, and rollback/relink behavior.
-- [ ] Ensure successful state contains schema version, channel, sorted installed platforms, active ref, active commit, manifest version, and UTC update time.
-- [ ] Run `python3 -m unittest tests.test_managed_install -v` and confirm all unit tests pass.
-- [ ] Commit with `git add scripts/managed_install.py tests/test_managed_install.py && git commit -m "feat: validate and atomically activate managed versions"`.
+- [x] Add unit tests for matching plugin manifest versions, required scripts and bundled skill files, checked-out commit equality, stable tag/version equality, atomic `current` replacement, first-install failure cleanup, and restoration of the previous symlink and state after a simulated platform or doctor failure.
+- [x] Run `python3 -m unittest tests.test_managed_install -v` and confirm the new tests fail at the missing validation and activation interfaces.
+- [x] Implement candidate worktree creation/reuse, `validate_candidate`, mkdir-based update locking, temporary-symlink activation, platform command construction, doctor execution, state commit, and rollback/relink behavior.
+- [x] Ensure successful state contains schema version, channel, sorted installed platforms, active ref, active commit, manifest version, and UTC update time.
+- [x] Run `python3 -m unittest tests.test_managed_install -v` and confirm all unit tests pass.
+- [x] Commit with `git add scripts/managed_install.py tests/test_managed_install.py && git commit -m "feat: validate and atomically activate managed versions"`.
 
 ### Task 3: Global CLI and platform routing
 

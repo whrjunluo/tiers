@@ -8,6 +8,7 @@ from unittest import mock
 from scripts.managed_install import (
     InstallPaths,
     ManagedInstaller,
+    ManagedInstallError,
     Revision,
     latest_semver_tag,
     parse_semver_tag,
@@ -111,6 +112,145 @@ class ManagedRepositoryTests(unittest.TestCase):
         self.assertIn("--bare", clone)
         self.assertEqual("git", fetch[0])
         self.assertIn("fetch", fetch)
+
+
+class CandidateAndActivationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.root = Path(self.temp_dir.name)
+        self.paths = InstallPaths.from_env(
+            {
+                "DEV_WORKFLOW_INSTALL_ROOT": str(self.root / "install"),
+                "DEV_WORKFLOW_BIN_DIR": str(self.root / "bin"),
+            },
+            home=self.root,
+        )
+        self.commit = "a" * 40
+        self.revision = Revision("stable", "refs/tags/v0.7.0", self.commit)
+
+    def make_candidate(self, name="candidate", version="0.7.0"):
+        candidate = self.root / name
+        for manifest in (
+            ".codex-plugin/plugin.json",
+            ".cursor-plugin/plugin.json",
+            ".claude-plugin/plugin.json",
+        ):
+            path = candidate / manifest
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"version": version}), encoding="utf-8")
+        for relative in (
+            "bin/install-codex",
+            "bin/install-cursor",
+            "bin/doctor",
+            "bin/dev-workflow",
+            "skills/dev-workflow/SKILL.md",
+            "skills/external-agent/SKILL.md",
+            "skills/grill-me/SKILL.md",
+        ):
+            path = candidate / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture\n", encoding="utf-8")
+        return candidate
+
+    def test_validate_candidate_requires_matching_manifests_and_commit(self):
+        candidate = self.make_candidate()
+        manager = ManagedInstaller(
+            self.paths,
+            "https://example.test/tiers.git",
+            runner=mock.Mock(return_value=self.commit + "\n"),
+        )
+        self.assertEqual("0.7.0", manager.validate_candidate(candidate, self.revision))
+
+        (candidate / ".cursor-plugin/plugin.json").write_text(
+            json.dumps({"version": "0.6.0"}), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ManagedInstallError, "manifest versions"):
+            manager.validate_candidate(candidate, self.revision)
+
+    def test_validate_candidate_rejects_tag_version_and_required_file_mismatch(self):
+        candidate = self.make_candidate()
+        manager = ManagedInstaller(
+            self.paths,
+            "https://example.test/tiers.git",
+            runner=mock.Mock(return_value=self.commit + "\n"),
+        )
+        wrong_tag = Revision("stable", "refs/tags/v0.8.0", self.commit)
+        with self.assertRaisesRegex(ManagedInstallError, "tag version"):
+            manager.validate_candidate(candidate, wrong_tag)
+
+        (candidate / "skills/grill-me/SKILL.md").unlink()
+        with self.assertRaisesRegex(ManagedInstallError, "required file"):
+            manager.validate_candidate(candidate, self.revision)
+
+    def test_lock_fails_immediately_when_an_update_is_in_progress(self):
+        manager = ManagedInstaller(self.paths, "https://example.test/tiers.git")
+        self.paths.install_root.mkdir(parents=True)
+        self.paths.lock_dir.mkdir()
+        with self.assertRaisesRegex(ManagedInstallError, "already in progress"):
+            with manager.update_lock():
+                self.fail("contended lock must not be entered")
+
+    def test_successful_activation_switches_current_and_writes_complete_state(self):
+        candidate = self.make_candidate()
+        manager = ManagedInstaller(self.paths, "https://example.test/tiers.git")
+        manager.validate_candidate = mock.Mock(return_value="0.7.0")
+        manager.run_platform_installers = mock.Mock()
+        manager.run_doctor = mock.Mock()
+
+        state = manager.activate_candidate(candidate, self.revision, ["cursor", "codex"])
+
+        self.assertEqual(candidate.resolve(), self.paths.current.resolve())
+        self.assertEqual(1, state["schema_version"])
+        self.assertEqual("stable", state["channel"])
+        self.assertEqual(["codex", "cursor"], state["platforms"])
+        self.assertEqual("refs/tags/v0.7.0", state["active_ref"])
+        self.assertEqual(self.commit, state["active_commit"])
+        self.assertEqual("0.7.0", state["manifest_version"])
+        self.assertIn("updated_at", state)
+
+    def test_failed_activation_restores_previous_version_and_state(self):
+        old = self.make_candidate("old", version="0.6.0")
+        candidate = self.make_candidate()
+        self.paths.install_root.mkdir(parents=True)
+        self.paths.current.symlink_to(old, target_is_directory=True)
+        previous = {
+            "schema_version": 1,
+            "channel": "stable",
+            "platforms": ["codex"],
+            "active_commit": "b" * 40,
+            "future_key": "preserve",
+        }
+        self.paths.state_file.write_text(json.dumps(previous), encoding="utf-8")
+        manager = ManagedInstaller(self.paths, "https://example.test/tiers.git")
+        manager.validate_candidate = mock.Mock(return_value="0.7.0")
+        manager.run_platform_installers = mock.Mock(
+            side_effect=[ManagedInstallError("simulated installer failure"), None]
+        )
+        manager.run_doctor = mock.Mock()
+
+        with self.assertRaisesRegex(ManagedInstallError, "simulated installer failure"):
+            manager.activate_candidate(candidate, self.revision, ["codex"])
+
+        self.assertEqual(old.resolve(), self.paths.current.resolve())
+        self.assertEqual(previous, manager.load_state())
+        self.assertEqual(2, manager.run_platform_installers.call_count)
+        rollback_call = manager.run_platform_installers.call_args_list[1]
+        self.assertEqual(old.resolve(), rollback_call.args[0])
+        self.assertEqual(["codex"], rollback_call.args[1])
+
+    def test_failed_first_activation_leaves_no_current_or_state(self):
+        candidate = self.make_candidate()
+        manager = ManagedInstaller(self.paths, "https://example.test/tiers.git")
+        manager.validate_candidate = mock.Mock(return_value="0.7.0")
+        manager.run_platform_installers = mock.Mock()
+        manager.run_doctor = mock.Mock(side_effect=ManagedInstallError("simulated doctor failure"))
+
+        with self.assertRaisesRegex(ManagedInstallError, "simulated doctor failure"):
+            manager.activate_candidate(candidate, self.revision, ["cursor"])
+
+        self.assertFalse(os.path.lexists(self.paths.current))
+        self.assertFalse(self.paths.state_file.exists())
 
 
 if __name__ == "__main__":
