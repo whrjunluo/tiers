@@ -8,9 +8,11 @@ import os
 import re
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Sequence, Tuple
 
 
 class ManagedInstallError(RuntimeError):
@@ -216,3 +218,196 @@ class ManagedInstaller:
             if temp_path.exists():
                 temp_path.unlink()
         return state
+
+    def prepare_candidate(self, revision: Revision) -> Path:
+        candidate = self.paths.versions / revision.commit
+        if candidate.exists():
+            actual_commit = self.runner(
+                ["git", "-C", str(candidate), "rev-parse", "HEAD"]
+            ).strip()
+            status = self.runner(
+                ["git", "-C", str(candidate), "status", "--porcelain"]
+            ).strip()
+            if actual_commit != revision.commit or status:
+                raise ManagedInstallError(
+                    f"Existing candidate is not an immutable clean worktree: {candidate}"
+                )
+            return candidate
+        self.paths.versions.mkdir(parents=True, exist_ok=True)
+        self.runner(
+            [
+                "git",
+                "--git-dir",
+                str(self.paths.source_git),
+                "worktree",
+                "add",
+                "--detach",
+                str(candidate),
+                revision.commit,
+            ]
+        )
+        return candidate
+
+    def validate_candidate(self, candidate: Path, revision: Revision) -> str:
+        required_files = (
+            "bin/install-codex",
+            "bin/install-cursor",
+            "bin/doctor",
+            "bin/dev-workflow",
+            "skills/dev-workflow/SKILL.md",
+            "skills/external-agent/SKILL.md",
+            "skills/grill-me/SKILL.md",
+        )
+        for relative in required_files:
+            if not (candidate / relative).is_file():
+                raise ManagedInstallError(f"Candidate is missing required file: {relative}")
+
+        versions = {}
+        for relative in (
+            ".codex-plugin/plugin.json",
+            ".cursor-plugin/plugin.json",
+            ".claude-plugin/plugin.json",
+        ):
+            path = candidate / relative
+            try:
+                with path.open(encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                version = manifest["version"]
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                raise ManagedInstallError(f"Cannot read candidate manifest {relative}: {exc}") from exc
+            if not isinstance(version, str) or not version:
+                raise ManagedInstallError(f"Candidate manifest has an invalid version: {relative}")
+            versions[relative] = version
+
+        unique_versions = set(versions.values())
+        if len(unique_versions) != 1:
+            detail = ", ".join(f"{name}={version}" for name, version in versions.items())
+            raise ManagedInstallError(f"Candidate manifest versions do not match: {detail}")
+        manifest_version = unique_versions.pop()
+
+        actual_commit = self.runner(
+            ["git", "-C", str(candidate), "rev-parse", "HEAD"]
+        ).strip()
+        if actual_commit != revision.commit:
+            raise ManagedInstallError(
+                f"Candidate commit mismatch: expected {revision.commit}, found {actual_commit}"
+            )
+
+        if revision.channel == "stable":
+            tag = revision.ref.removeprefix("refs/tags/")
+            tag_version = tag.removeprefix("v")
+            if parse_semver_tag(tag) is None or tag_version != manifest_version:
+                raise ManagedInstallError(
+                    f"Stable tag version {tag_version} does not match manifest version {manifest_version}"
+                )
+        return manifest_version
+
+    @contextmanager
+    def update_lock(self) -> Iterator[None]:
+        self.paths.install_root.mkdir(parents=True, exist_ok=True)
+        try:
+            self.paths.lock_dir.mkdir()
+        except FileExistsError as exc:
+            raise ManagedInstallError(
+                f"Another dev-workflow update is already in progress ({self.paths.lock_dir})"
+            ) from exc
+        try:
+            yield
+        finally:
+            try:
+                self.paths.lock_dir.rmdir()
+            except FileNotFoundError:
+                pass
+
+    def _replace_current(self, target: Path) -> None:
+        self.paths.install_root.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(self.paths.current) and not self.paths.current.is_symlink():
+            raise ManagedInstallError(f"Managed current path is not a symlink: {self.paths.current}")
+        temporary = self.paths.install_root / f".current.{os.getpid()}"
+        try:
+            if os.path.lexists(temporary):
+                temporary.unlink()
+            temporary.symlink_to(target, target_is_directory=True)
+            os.replace(temporary, self.paths.current)
+        finally:
+            if os.path.lexists(temporary):
+                temporary.unlink()
+
+    def _remove_current(self) -> None:
+        if os.path.lexists(self.paths.current):
+            if not self.paths.current.is_symlink():
+                raise ManagedInstallError(f"Managed current path is not a symlink: {self.paths.current}")
+            self.paths.current.unlink()
+
+    def run_platform_installers(
+        self,
+        plugin_root: Path,
+        platforms: Sequence[str],
+        *,
+        install_deps: bool = False,
+    ) -> None:
+        env = dict(os.environ)
+        env["DEV_WORKFLOW_PLUGIN_ROOT"] = str(self.paths.current)
+        for platform in platforms:
+            if platform not in ("codex", "cursor"):
+                raise ManagedInstallError(f"Unsupported platform: {platform}")
+            args = ["bash", str(plugin_root / "bin" / f"install-{platform}"), "--yes"]
+            if install_deps:
+                args.append("--install-deps")
+            self.runner(args, env=env)
+
+    def run_doctor(self, plugin_root: Path, platforms: Sequence[str]) -> None:
+        env = dict(os.environ)
+        env["DEV_WORKFLOW_PLUGIN_ROOT"] = str(self.paths.current)
+        for platform in platforms:
+            self.runner(
+                ["bash", str(plugin_root / "bin/doctor"), "--platform", platform],
+                env=env,
+            )
+
+    def activate_candidate(
+        self,
+        candidate: Path,
+        revision: Revision,
+        platforms: Sequence[str],
+        *,
+        install_deps: bool = False,
+    ) -> dict[str, Any]:
+        normalized_platforms = sorted(set(platforms))
+        if not normalized_platforms:
+            raise ManagedInstallError("At least one platform is required for activation")
+        if any(platform not in ("codex", "cursor") for platform in normalized_platforms):
+            raise ManagedInstallError("Platforms must contain only codex and cursor")
+
+        manifest_version = self.validate_candidate(candidate, revision)
+        previous_state = self.load_state()
+        previous_target = self.paths.current.resolve() if self.paths.current.is_symlink() else None
+        self._replace_current(candidate)
+        try:
+            self.run_platform_installers(
+                candidate, normalized_platforms, install_deps=install_deps
+            )
+            self.run_doctor(candidate, normalized_platforms)
+            return self.write_state(
+                {
+                    "schema_version": 1,
+                    "channel": revision.channel,
+                    "platforms": normalized_platforms,
+                    "active_ref": revision.ref,
+                    "active_commit": revision.commit,
+                    "manifest_version": manifest_version,
+                    "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                }
+            )
+        except Exception:
+            if previous_target is None:
+                self._remove_current()
+            else:
+                self._replace_current(previous_target)
+                previous_platforms = previous_state.get("platforms", [])
+                if previous_platforms:
+                    try:
+                        self.run_platform_installers(previous_target, previous_platforms)
+                    except Exception:
+                        pass
+            raise
