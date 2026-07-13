@@ -99,7 +99,7 @@ DEV_WORKFLOW_REPO_URL="$REPO_URL" \
 DEV_WORKFLOW_INSTALL_ROOT="$INSTALL_ROOT" \
 DEV_WORKFLOW_BIN_DIR="$BIN_DIR" \
 DEV_WORKFLOW_BOOTSTRAP_LOCK_HELD=1 \
-python3 "$CANDIDATE/bin/dev-workflow" "${BOOTSTRAP_ARGS[@]}"
+python3 -B "$CANDIDATE/bin/dev-workflow" "${BOOTSTRAP_ARGS[@]}"
 
 echo "Installer source: $RAW_INSTALL_URL"
 echo "Inspect first: curl -fsSLO $RAW_INSTALL_URL && less install.sh"

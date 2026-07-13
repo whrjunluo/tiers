@@ -2,6 +2,9 @@
 """Global entry point for managed dev-workflow installations."""
 
 import sys
+
+sys.dont_write_bytecode = True
+
 from pathlib import Path
 
 
