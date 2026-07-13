@@ -64,12 +64,12 @@
 - Create: `install.sh`
 - Modify: `tests/managed-install.sh`
 
-- [ ] Add failing integration cases for bootstrap argument exclusivity, missing prerequisites, stable first install, edge first install, stable/edge switching, idempotent update, missing stable tags, manifest/tag mismatch, platform failure rollback, doctor failure rollback, preservation of pre-existing `DEV_WORKFLOW_DATA`, and global command symlink creation.
-- [ ] Run `bash tests/managed-install.sh` and confirm bootstrap cases fail because `install.sh` does not exist.
-- [ ] Implement a compact POSIX-compatible bootstrap that validates arguments and prerequisites, initializes/fetches the managed bare clone, resolves the first revision, creates its immutable worktree, and invokes that candidate's internal bootstrap command.
-- [ ] Keep bootstrap source URL and filesystem roots overridable, never request `sudo`, and print an inspect-before-run alternative plus Codex/Cursor reload guidance.
-- [ ] Run `bash tests/managed-install.sh`, `bash tests/install-codex.sh`, `bash tests/install-cursor.sh`, `bash tests/update.sh`, and `bash tests/doctor.sh`; confirm all pass.
-- [ ] Commit with `git add install.sh tests/managed-install.sh && git commit -m "feat: add one-line managed installer"`.
+- [x] Add failing integration cases for bootstrap argument exclusivity, missing prerequisites, stable first install, edge first install, stable/edge switching, idempotent update, missing stable tags, manifest/tag mismatch, platform failure rollback, doctor failure rollback, preservation of pre-existing `DEV_WORKFLOW_DATA`, and global command symlink creation.
+- [x] Run `bash tests/managed-install.sh` and confirm bootstrap cases fail because `install.sh` does not exist.
+- [x] Implement a compact POSIX-compatible bootstrap that validates arguments and prerequisites, initializes/fetches the managed bare clone, resolves the first revision, creates its immutable worktree, and invokes that candidate's internal bootstrap command.
+- [x] Keep bootstrap source URL and filesystem roots overridable, never request `sudo`, and print an inspect-before-run alternative plus Codex/Cursor reload guidance.
+- [x] Run `bash tests/managed-install.sh`, `bash tests/install-codex.sh`, `bash tests/install-cursor.sh`, `bash tests/update.sh`, and `bash tests/doctor.sh`; confirm all pass.
+- [x] Commit with `git add install.sh tests/managed-install.sh && git commit -m "feat: add one-line managed installer"`.
 
 ### Task 5: Release metadata, documentation, and completion gates
 

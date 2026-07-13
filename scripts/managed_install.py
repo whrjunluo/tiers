@@ -540,6 +540,40 @@ def command_doctor(manager: ManagedInstaller, doctor_args: Sequence[str]) -> int
     return completed.returncode
 
 
+def command_bootstrap(manager: ManagedInstaller, arguments: Sequence[str]) -> None:
+    parser = argparse.ArgumentParser(prog="dev-workflow _bootstrap", add_help=False)
+    parser.add_argument("--channel", required=True, choices=("stable", "edge"))
+    parser.add_argument("--ref", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--platform", required=True, choices=("codex", "cursor", "all"))
+    parser.add_argument("--install-deps", action="store_true")
+    parsed = parser.parse_args(list(arguments))
+
+    if os.environ.get("DEV_WORKFLOW_BOOTSTRAP_LOCK_HELD") != "1" or not manager.paths.lock_dir.is_dir():
+        raise ManagedInstallError("Bootstrap activation requires the managed update lock")
+    if not re.fullmatch(r"[0-9a-f]{40}", parsed.commit):
+        raise ManagedInstallError("Bootstrap commit must be a full lowercase Git object ID")
+    if parsed.channel == "edge" and parsed.ref != "refs/remotes/origin/main":
+        raise ManagedInstallError("Edge bootstrap must use refs/remotes/origin/main")
+    if parsed.channel == "stable" and not parsed.ref.startswith("refs/tags/v"):
+        raise ManagedInstallError("Stable bootstrap must use a semantic release tag")
+
+    revision = Revision(parsed.channel, parsed.ref, parsed.commit)
+    candidate = manager.prepare_candidate(revision)
+    requested = ["codex", "cursor"] if parsed.platform == "all" else [parsed.platform]
+    existing = manager.load_state().get("platforms", [])
+    platforms = sorted(set(existing) | set(requested))
+    result = manager.activate_candidate(
+        candidate, revision, platforms, install_deps=parsed.install_deps
+    )
+    print(
+        f"Installed dev-workflow {result['manifest_version']} "
+        f"({result['channel']}, {result['active_commit'][:12]})."
+    )
+    warn_path(manager)
+    print_reload_guidance(platforms)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev-workflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -552,6 +586,7 @@ def build_parser() -> argparse.ArgumentParser:
     install = subparsers.add_parser("install", help="add or refresh a platform")
     install.add_argument("platform", choices=("codex", "cursor", "all"))
     install.add_argument("--install-deps", action="store_true")
+    subparsers.add_parser("doctor", help="run the active installation doctor")
     return parser
 
 
@@ -559,6 +594,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     arguments = list(argv if argv is not None else sys.argv[1:])
     manager = manager_from_env()
     try:
+        if arguments and arguments[0] == "_bootstrap":
+            command_bootstrap(manager, arguments[1:])
+            return 0
         if arguments and arguments[0] == "doctor":
             return command_doctor(manager, arguments[1:])
         parsed = build_parser().parse_args(arguments)

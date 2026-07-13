@@ -32,6 +32,13 @@ if str(actual) != expected:
     raise SystemExit(f"{field}: expected {expected!r}, found {actual!r}")
 PY
 }
+resolved_current() {
+  python3 - "$1/current" <<'PY'
+import sys
+from pathlib import Path
+print(Path(sys.argv[1]).resolve())
+PY
+}
 
 python3 - "$ROOT" "$SOURCE" <<'PY'
 import json
@@ -110,6 +117,131 @@ git -C "$SOURCE" add .
 git -C "$SOURCE" commit -qm "edge fixture"
 EDGE_COMMIT="$(git -C "$SOURCE" rev-parse HEAD)"
 git clone -q --bare "$SOURCE" "$REMOTE"
+
+BOOT_HOME="$TMP/bootstrap-home"
+BOOT_ROOT="$TMP/bootstrap-managed"
+BOOT_BIN="$TMP/bootstrap-bin"
+BOOT_DATA="$BOOT_HOME/.dev-workflow"
+mkdir -p "$BOOT_DATA" "$BOOT_BIN"
+printf 'keep-me\n' > "$BOOT_DATA/user-note.txt"
+
+bootstrap() {
+  HOME="$BOOT_HOME" \
+  DEV_WORKFLOW_REPO_URL="$REMOTE" \
+  DEV_WORKFLOW_INSTALL_ROOT="$BOOT_ROOT" \
+  DEV_WORKFLOW_BIN_DIR="$BOOT_BIN" \
+  DEV_WORKFLOW_DATA="$BOOT_DATA" \
+  TEST_LOG="$LOG" \
+  bash "$ROOT/install.sh" "$@"
+}
+
+if bootstrap >"$TMP/no-platform.out" 2>&1; then
+  fail "bootstrap without a platform should fail"
+fi
+assert_contains "$(cat "$TMP/no-platform.out")" "exactly one"
+if bootstrap --codex --cursor >"$TMP/two-platforms.out" 2>&1; then
+  fail "bootstrap with multiple platform flags should fail"
+fi
+assert_contains "$(cat "$TMP/two-platforms.out")" "exactly one"
+if PATH="$TMP/empty-path" /bin/bash "$ROOT/install.sh" --codex >"$TMP/prereq.out" 2>&1; then
+  fail "bootstrap without git should fail"
+fi
+assert_contains "$(cat "$TMP/prereq.out")" "git is required"
+
+bootstrap --codex >/dev/null
+assert_state_file="$BOOT_ROOT/install.json"
+python3 - "$assert_state_file" "$STABLE_COMMIT" <<'PY'
+import json
+import sys
+
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["channel"] == "stable", state
+assert state["platforms"] == ["codex"], state
+assert state["active_commit"] == sys.argv[2], state
+assert state["manifest_version"] == "0.7.0", state
+PY
+[ -L "$BOOT_ROOT/current" ] || fail "bootstrap did not create current symlink"
+[ -L "$BOOT_BIN/dev-workflow" ] || fail "bootstrap did not create global command symlink"
+[ "$(cat "$BOOT_DATA/user-note.txt")" = "keep-me" ] || fail "bootstrap changed user data"
+HOME="$BOOT_HOME" DEV_WORKFLOW_INSTALL_ROOT="$BOOT_ROOT" DEV_WORKFLOW_BIN_DIR="$BOOT_BIN" \
+  "$BOOT_BIN/dev-workflow" status >/dev/null
+
+old_current="$(resolved_current "$BOOT_ROOT")"
+old_state="$(cat "$BOOT_ROOT/install.json")"
+if HOME="$BOOT_HOME" DEV_WORKFLOW_REPO_URL="$REMOTE" DEV_WORKFLOW_INSTALL_ROOT="$BOOT_ROOT" \
+  DEV_WORKFLOW_BIN_DIR="$BOOT_BIN" DEV_WORKFLOW_DATA="$BOOT_DATA" TEST_LOG="$LOG" FAIL_CODEX=1 \
+  "$BOOT_BIN/dev-workflow" update --channel edge >"$TMP/platform-rollback.out" 2>&1; then
+  fail "platform failure should roll back update"
+fi
+[ "$(resolved_current "$BOOT_ROOT")" = "$old_current" ] || fail "platform failure changed current"
+[ "$(cat "$BOOT_ROOT/install.json")" = "$old_state" ] || fail "platform failure changed state"
+
+if HOME="$BOOT_HOME" DEV_WORKFLOW_REPO_URL="$REMOTE" DEV_WORKFLOW_INSTALL_ROOT="$BOOT_ROOT" \
+  DEV_WORKFLOW_BIN_DIR="$BOOT_BIN" DEV_WORKFLOW_DATA="$BOOT_DATA" TEST_LOG="$LOG" FAIL_DOCTOR=1 \
+  "$BOOT_BIN/dev-workflow" update --channel edge >"$TMP/doctor-rollback.out" 2>&1; then
+  fail "doctor failure should roll back update"
+fi
+[ "$(resolved_current "$BOOT_ROOT")" = "$old_current" ] || fail "doctor failure changed current"
+[ "$(cat "$BOOT_ROOT/install.json")" = "$old_state" ] || fail "doctor failure changed state"
+
+HOME="$BOOT_HOME" DEV_WORKFLOW_REPO_URL="$REMOTE" DEV_WORKFLOW_INSTALL_ROOT="$BOOT_ROOT" \
+  DEV_WORKFLOW_BIN_DIR="$BOOT_BIN" DEV_WORKFLOW_DATA="$BOOT_DATA" TEST_LOG="$LOG" \
+  "$BOOT_BIN/dev-workflow" update --channel edge >/dev/null
+python3 - "$BOOT_ROOT/install.json" "$EDGE_COMMIT" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["channel"] == "edge" and state["active_commit"] == sys.argv[2], state
+PY
+HOME="$BOOT_HOME" DEV_WORKFLOW_REPO_URL="$REMOTE" DEV_WORKFLOW_INSTALL_ROOT="$BOOT_ROOT" \
+  DEV_WORKFLOW_BIN_DIR="$BOOT_BIN" DEV_WORKFLOW_DATA="$BOOT_DATA" TEST_LOG="$LOG" \
+  "$BOOT_BIN/dev-workflow" update --channel stable >/dev/null
+
+EDGE_HOME="$TMP/edge-home"
+EDGE_ROOT="$TMP/edge-managed"
+EDGE_BIN="$TMP/edge-bin"
+HOME="$EDGE_HOME" DEV_WORKFLOW_REPO_URL="$REMOTE" DEV_WORKFLOW_INSTALL_ROOT="$EDGE_ROOT" \
+  DEV_WORKFLOW_BIN_DIR="$EDGE_BIN" DEV_WORKFLOW_DATA="$EDGE_HOME/.dev-workflow" TEST_LOG="$LOG" \
+  bash "$ROOT/install.sh" --all --channel edge >/dev/null
+python3 - "$EDGE_ROOT/install.json" "$EDGE_COMMIT" <<'PY'
+import json
+import sys
+state = json.load(open(sys.argv[1], encoding="utf-8"))
+assert state["channel"] == "edge", state
+assert state["platforms"] == ["codex", "cursor"], state
+assert state["active_commit"] == sys.argv[2], state
+PY
+
+FAIL_ROOT="$TMP/failed-first-managed"
+FAIL_BIN="$TMP/failed-first-bin"
+if HOME="$TMP/failed-first-home" DEV_WORKFLOW_REPO_URL="$REMOTE" \
+  DEV_WORKFLOW_INSTALL_ROOT="$FAIL_ROOT" DEV_WORKFLOW_BIN_DIR="$FAIL_BIN" TEST_LOG="$LOG" \
+  FAIL_CURSOR=1 bash "$ROOT/install.sh" --cursor --channel edge >"$TMP/failed-first.out" 2>&1; then
+  fail "failed first install should return non-zero"
+fi
+[ ! -e "$FAIL_ROOT/current" ] && [ ! -L "$FAIL_ROOT/current" ] || fail "failed first install left current"
+[ ! -e "$FAIL_ROOT/install.json" ] || fail "failed first install left state"
+[ ! -e "$FAIL_BIN/dev-workflow" ] && [ ! -L "$FAIL_BIN/dev-workflow" ] || fail "failed first install left command"
+
+NO_TAG_REMOTE="$TMP/no-tag.git"
+git clone -q --bare "$REMOTE" "$NO_TAG_REMOTE"
+git --git-dir "$NO_TAG_REMOTE" update-ref -d refs/tags/v0.7.0
+if HOME="$TMP/no-tag-home" DEV_WORKFLOW_REPO_URL="$NO_TAG_REMOTE" \
+  DEV_WORKFLOW_INSTALL_ROOT="$TMP/no-tag-managed" DEV_WORKFLOW_BIN_DIR="$TMP/no-tag-bin" \
+  bash "$ROOT/install.sh" --codex >"$TMP/no-tag.out" 2>&1; then
+  fail "stable bootstrap without a release tag should fail"
+fi
+assert_contains "$(cat "$TMP/no-tag.out")" "No stable release tag"
+
+MISMATCH_REMOTE="$TMP/mismatch.git"
+git clone -q --bare "$REMOTE" "$MISMATCH_REMOTE"
+git --git-dir "$MISMATCH_REMOTE" tag v0.9.0 "$STABLE_COMMIT"
+if HOME="$TMP/mismatch-home" DEV_WORKFLOW_REPO_URL="$MISMATCH_REMOTE" \
+  DEV_WORKFLOW_INSTALL_ROOT="$TMP/mismatch-managed" DEV_WORKFLOW_BIN_DIR="$TMP/mismatch-bin" \
+  TEST_LOG="$LOG" bash "$ROOT/install.sh" --codex >"$TMP/mismatch.out" 2>&1; then
+  fail "stable bootstrap with a tag/version mismatch should fail"
+fi
+assert_contains "$(cat "$TMP/mismatch.out")" "does not match manifest version"
 
 mkdir -p "$INSTALL_ROOT/versions"
 git clone -q --bare "$REMOTE" "$INSTALL_ROOT/source.git"
