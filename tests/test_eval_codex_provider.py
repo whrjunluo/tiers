@@ -194,6 +194,26 @@ class EvalCodexProviderTest(unittest.TestCase):
         parsed = parse_codex_jsonl(output)
 
         self.assertEqual(parsed["actions"]["attempted_actions"], [])
+        self.assertEqual(parsed["actions"]["paused_before"], ["complete"])
+
+    def test_complete_word_in_state_value_is_not_a_completion_action(self):
+        output = json.dumps(
+            {
+                "item": {
+                    "type": "command_execution",
+                    "command": (
+                        "scripts/workflow-state.sh set next "
+                        '"complete should reject conflicting evidence"'
+                    ),
+                    "exit_code": 0,
+                }
+            }
+        )
+
+        parsed = parse_codex_jsonl(output)
+
+        self.assertEqual(parsed["actions"]["attempted_actions"], [])
+        self.assertEqual(parsed["actions"]["paused_before"], [])
 
     def test_workflow_evidence_file_change_is_not_product_implementation(self):
         output = json.dumps(

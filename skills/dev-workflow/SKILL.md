@@ -53,6 +53,19 @@ description: Use when a development task could change code, behavior, configurat
 
 脚本自身也按同样规则自动推断，Codex 环境不要依赖 Claude 专属变量。
 
+## 控制器硬门（最先执行）
+
+<!-- SELF_HOSTING_CONTROLLER -->
+
+`<plugin-root>/scripts/workflow-state.sh` 是本次会话唯一的工作流 controller。即使当前工作区正好是 tiers/dev-workflow 自身，工作区里的 `scripts/workflow-state.sh` 也只是**待修改代码**，不得拿它代替安装版 controller；controller 必须从当前已加载 skill 的路径或上述环境变量解析。
+
+显式判级后，按以下短契约执行，后文只解释细节：
+
+1. 先用 controller 执行 `init` 与 `check`；若存在同目标未完成状态则续行，已封存任务用 `start <task> <level>`，Goal 只用 `continue-goal`。
+2. L0–L3 必须通过 controller 设置 `task`、`level`、`context.target`、`context.sources`，写入对应理解证据并执行 `understand <evidence>`。`understand` 返回 PASS 之前，禁止任何文件修改，包括测试、spec 和 plan。
+3. 需要 TDD 时，`set phase tdd` 成功之前，禁止新增或修改测试；实现、review 和 complete 也必须继续使用同一个 controller。
+4. controller 不可用、路径无法确认或硬门失败时，输出 BLOCKED/降级原因并停下，不得改用工作区内同名脚本绕过。
+
 ## 使用时机
 
 每次接到新的开发任务时，先跑决策树确定级别，再按对应步骤执行。
