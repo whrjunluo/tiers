@@ -51,12 +51,12 @@
 - Create: `tests/managed-install.sh`
 - Modify: `scripts/managed_install.py`
 
-- [ ] Build a temporary local Git remote in `tests/managed-install.sh` and add failing integration cases for `status`, `update --channel stable|edge`, `install codex|cursor|all`, `doctor` argument forwarding, platform recording only after success, lock contention, and invocation outside the repository checkout.
-- [ ] Use test-only stub platform installers and doctor scripts in fixture commits so routing and rollback are deterministic without touching real Codex or Cursor homes.
-- [ ] Run `bash tests/managed-install.sh` and confirm it fails because the global entry point and command parser are absent.
-- [ ] Add the executable Python entry point and implement public command parsing, offline status output, channel persistence, recorded-platform updates, explicit dependency forwarding, reload guidance, and actionable PATH warnings.
-- [ ] Run `bash tests/managed-install.sh` and `python3 -m unittest tests.test_managed_install -v`; confirm both pass.
-- [ ] Commit with `git add bin/dev-workflow scripts/managed_install.py tests/managed-install.sh && git commit -m "feat: add global dev-workflow CLI"`.
+- [x] Build a temporary local Git remote in `tests/managed-install.sh` and add failing integration cases for `status`, `update --channel stable|edge`, `install codex|cursor|all`, `doctor` argument forwarding, platform recording only after success, lock contention, and invocation outside the repository checkout.
+- [x] Use test-only stub platform installers and doctor scripts in fixture commits so routing and rollback are deterministic without touching real Codex or Cursor homes.
+- [x] Run `bash tests/managed-install.sh` and confirm it fails because the global entry point and command parser are absent.
+- [x] Add the executable Python entry point and implement public command parsing, offline status output, channel persistence, recorded-platform updates, explicit dependency forwarding, reload guidance, and actionable PATH warnings.
+- [x] Run `bash tests/managed-install.sh` and `python3 -m unittest tests.test_managed_install -v`; confirm both pass.
+- [x] Commit with `git add bin/dev-workflow scripts/managed_install.py tests/managed-install.sh && git commit -m "feat: add global dev-workflow CLI"`.
 
 ### Task 4: One-line bootstrap and end-to-end rollback
 
