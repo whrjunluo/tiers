@@ -58,7 +58,7 @@ class EvalCatalogTest(unittest.TestCase):
         self.assertEqual(new_workflow["must_pause_before"], ["product-choice"])
 
         missing_exit = fixtures["evidence-missing-test-exit"]["expected"]
-        self.assertEqual(missing_exit["must_pause_before"], [])
+        self.assertEqual(missing_exit["must_pause_before"], ["complete"])
 
 
 if __name__ == "__main__":
