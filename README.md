@@ -31,7 +31,7 @@
 
 - 安装时选 **user scope**，让所有项目、终端与桌面/网页客户端都生效。
 - 装完**完全重启 Claude Code**（退出进程重开，不只是新开对话），让 skill 与 hook 加载。
-- 验证：`/` 菜单出现 `dev-workflow:dev-workflow`、`dev-workflow:grill-me`、`dev-workflow:external-agent`。
+- 验证：`/` 菜单出现 `dev-workflow:dev-workflow`、`dev-workflow:grill-me`、`dev-workflow:grilling`、`dev-workflow:external-agent`。
 
 ### Codex（一行安装）
 
@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
   | bash -s -- --codex
 ```
 
-当前 stable release 为 `v0.7.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和三个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
+当前 stable release 为 `v0.8.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
 
 如果 `~/.local/bin` 不在 `PATH`，安装器会给出提示；加入后可在任意目录运行 `dev-workflow`。装完**重启 Codex 或新开会话**。加 `--install-deps` 会一并安装可脚本化的伴侣 skill：
 
@@ -65,9 +65,9 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
   | bash -s -- --all --channel edge
 ```
 
-`stable` 只接受正式 semver tag，找不到 release 时直接失败，不会静默改装 edge。Cursor 安装会把三个内置 skill 链接进 `~/.cursor/skills/`；装完 **Reload Window 或完全重启 Cursor**。
+`stable` 只接受正式 semver tag，找不到 release 时直接失败，不会静默改装 edge。Cursor 安装会把四个内置 skill 链接进 `~/.cursor/skills/`；装完 **Reload Window 或完全重启 Cursor**。
 
-- 验证：Agent 里输入 `/` 能看到 `dev-workflow` / `grill-me` / `external-agent`，或直接描述开发需求触发自动判级。
+- 验证：Agent 里输入 `/` 能看到 `dev-workflow` / `grill-me` / `grilling` / `external-agent`，或直接描述开发需求触发自动判级。
 - 同样支持 `--install-deps` 一并安装伴侣 skill（`npx skills add`）。
 - **关于 hook**：Cursor 的 `beforeSubmitPrompt`（对应 Claude 的 `UserPromptSubmit`）只能放行/拦截、**不能向模型注入上下文**，故不安装"判级纠正提醒"hook。该能力由常驻的 `dev-workflow` skill 兜底——判级被纠正时 Agent 会主动用 `learnings.sh` 记录，**进化功能完整**，仅少了 Claude/Codex 上那层自动提醒。
 
@@ -80,9 +80,9 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
   | bash -s -- --trae
 ```
 
-安装器按 TRAE 官方全局 Skill 目录把三个内置 Skill 链接到 `~/.trae-cn/skills/`，同时兼容 TRAE IDE 与 TRAE CLI 读取。装完后完全重启 TRAE IDE 或 TRAE CLI，让 Skill 索引重新加载。
+安装器按 TRAE 官方全局 Skill 目录把四个内置 Skill 链接到 `~/.trae-cn/skills/`，同时兼容 TRAE IDE 与 TRAE CLI 读取。装完后完全重启 TRAE IDE 或 TRAE CLI，让 Skill 索引重新加载。
 
-- 验证：在 TRAE 的 Skill 面板或 TRAE CLI `/skills` 中看到 `dev-workflow` / `grill-me` / `external-agent`，也可以直接描述开发需求验证自动判级。
+- 验证：在 TRAE 的 Skill 面板或 TRAE CLI `/skills` 中看到 `dev-workflow` / `grill-me` / `grilling` / `external-agent`，也可以直接描述开发需求验证自动判级。
 - 同样支持 `--install-deps` 一并安装伴侣 Skill。
 - 可用 `TRAE_HOME` 覆盖默认的 `~/.trae-cn`；例如测试或多配置场景可指定独立目录。
 
@@ -277,7 +277,7 @@ Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和
 | 级别 | 典型场景 | 工作流 |
 |---|---|---|
 | **L0** 大型改造 | 跨模块重构、架构迁移 | 范围审视 → 架构验证 → 实现 → QA → 发布 |
-| **L1** 大功能 | 新增模块 / 跨文件设计 | brainstorm → spec → grill-me → plan → TDD → review |
+| **L1** 大功能 | 新增模块 / 跨文件设计 | brainstorm → spec → grilling → plan → TDD → review |
 | **L2** 中型迭代 | 改已有逻辑，≥3 文件 | 轻量 spec → TDD → 条件评审；高风险业务闭环强制状态/外部评审/证据门 |
 | **L3** Bug 修复 | 线上回归 / 行为问题 | 系统性调试 → 复现测试 → 修复 |
 | **L4** 文案/样式 | 纯 UI 文字 / 样式 | 直接写，无需 spec 或测试 |
@@ -309,7 +309,7 @@ Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和
 |---|---|---|
 | [superpowers](https://github.com/obra/superpowers) | L1 的 brainstorm / TDD / plans / review 完整 skill 链 | **Claude Code**：`/plugin install superpowers@claude-plugins-official`<br>**Codex / 其他**：`npx skills@latest add obra/superpowers` |
 | [code-review-graph](https://github.com/nicobailon/code-review-graph) | codegraph 判级校验（上表 Mode A/B） | `uv tool install code-review-graph`（或 `pipx install` / `pip install`） |
-| [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-with-docs` | 内置 `grill-me` 的升级（锚定 CONTEXT.md / ADR），装了即优先用 | `npx skills@latest add mattpocock/skills` |
+| [mattpocock/skills](https://github.com/mattpocock/skills) 的 `grill-with-docs` | 内置 `grilling` 的升级（锚定 CONTEXT.md / ADR），装了即优先用 | `npx skills@latest add mattpocock/skills` |
 | `figma-fidelity-verification` skill / MCP bundle | UI 设计稿保真验收的取数与量化核对 | 按该 skill/MCP bundle 的安装说明完成授权；未安装时走内置人工验收 checklist |
 | [Antigravity CLI](https://antigravity.google/) | `external-agent` 调用 Antigravity 独立二次意见 | `curl -fsSL https://antigravity.google/cli/install.sh \| bash`，然后运行 `agy` 登录 |
 | Cursor Agent CLI | `external-agent` 调用 Cursor Agent 独立二次意见 | 安装 Cursor Agent CLI 后运行 `cursor-agent login` |
@@ -321,7 +321,8 @@ Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和
 ## 内置 skills
 
 - `dev-workflow` — 工作流路由主 skill。
-- `grill-me` — L0/L1 设计文档定稿前追问一轮、补边界。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
+- `grilling` — L0/L1 设计文档定稿前逐题追问、查明环境事实并在用户确认前禁止实施。Vendored from [mattpocock/skills](https://github.com/mattpocock/skills)（MIT © 2026 Matt Pocock，见 `LICENSES/grill-me-MIT.txt`）。
+- `grill-me` — 上游保留的显式调用兼容入口，转入 `/grilling` session；不会被模型自动触发。
 - `external-agent` — 统一外部 agent 委派：支持单 agent 调用和 `--cross-review` 双家族 quorum，包含 `--mode review|delegate`、`--format text|json`、`--SESSION_ID`、`--context git`、`--list`。codex/gemini 适配解析逻辑参考自 [GuDaStudio/skills](https://github.com/GuDaStudio/skills)（MIT），其余为本仓原创，见 `LICENSES/collaborating-skills-MIT.txt`。
 
 ## 诊断脚本
@@ -334,4 +335,4 @@ Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和
 
 ## License
 
-MIT（`grill-me` 单独遵循其上游 MIT，见 `LICENSES/`）。
+MIT（`grill-me` / `grilling` 单独遵循其上游 MIT，见 `LICENSES/`）。

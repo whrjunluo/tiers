@@ -1,6 +1,9 @@
-The `grill-me` skill (skills/grill-me/SKILL.md) is vendored from
-mattpocock/skills (https://github.com/mattpocock/skills),
-path skills/productivity/grill-me, under the following license:
+The `grill-me` and `grilling` skills (skills/grill-me/SKILL.md and
+skills/grilling/SKILL.md) are vendored from mattpocock/skills
+(https://github.com/mattpocock/skills) at commit
+0ac3f3fbf1c35b913ae1b7f5fcd303a4fb2e2dba, original repository paths
+skills/productivity/grill-me and skills/productivity/grilling, under the
+following license:
 
 MIT License
 

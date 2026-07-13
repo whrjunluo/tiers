@@ -61,7 +61,7 @@ done
 
 missing_builtin=0
 missing_builtin_names=""
-for skill in dev-workflow grill-me external-agent; do
+for skill in dev-workflow grill-me grilling external-agent; do
   if [ ! -d "$PLUGIN_ROOT/skills/$skill" ]; then
     missing_builtin=1
     missing_builtin_names="${missing_builtin_names}${missing_builtin_names:+, }$skill"
@@ -131,7 +131,7 @@ else
   status "Built-in skills" missing "$missing_builtin_names"
 fi
 status "superpowers" "$superpowers" "optional enhanced L1/TDD/review skill chain"
-status "grill-with-docs" "$grill_docs" "optional upgrade; built-in grill-me is available"
+status "grill-with-docs" "$grill_docs" "optional upgrade; built-in grilling is available"
 status "Figma fidelity" "$figma_fidelity" "optional UI design verification workflow"
 status "code-review-graph" "$codegraph" "optional risk calibration and MCP registration"
 status "external-agent CLIs" "$external_ready available" "$external_family_count distinct families; codex/cursor-agent/grok/agy/opencode/mimo"

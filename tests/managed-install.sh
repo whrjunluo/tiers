@@ -54,8 +54,8 @@ manifests = (
 print(",".join(json.loads((root / path).read_text(encoding="utf-8"))["version"] for path in manifests))
 PY
 )"
-[ "$release_versions" = "0.7.0,0.7.0,0.7.0" ] || \
-  fail "release manifests must all be 0.7.0, found $release_versions"
+[ "$release_versions" = "0.8.0,0.8.0,0.8.0" ] || \
+  fail "release manifests must all be 0.8.0, found $release_versions"
 
 python3 - "$ROOT" "$SOURCE" <<'PY'
 import json
@@ -105,7 +105,7 @@ for name, content in scripts.items():
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
 
-for skill in ("dev-workflow", "external-agent", "grill-me"):
+for skill in ("dev-workflow", "external-agent", "grill-me", "grilling"):
     path = source / "skills" / skill / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"# {skill}\n", encoding="utf-8")

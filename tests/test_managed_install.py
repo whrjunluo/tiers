@@ -148,6 +148,7 @@ class CandidateAndActivationTests(unittest.TestCase):
             "skills/dev-workflow/SKILL.md",
             "skills/external-agent/SKILL.md",
             "skills/grill-me/SKILL.md",
+            "skills/grilling/SKILL.md",
         ):
             path = candidate / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +181,12 @@ class CandidateAndActivationTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagedInstallError, "tag version"):
             manager.validate_candidate(candidate, wrong_tag)
 
-        (candidate / "skills/grill-me/SKILL.md").unlink()
-        with self.assertRaisesRegex(ManagedInstallError, "required file"):
-            manager.validate_candidate(candidate, self.revision)
+        for skill in ("grill-me", "grilling"):
+            with self.subTest(skill=skill):
+                candidate = self.make_candidate(name=f"candidate-missing-{skill}")
+                (candidate / f"skills/{skill}/SKILL.md").unlink()
+                with self.assertRaisesRegex(ManagedInstallError, "required file"):
+                    manager.validate_candidate(candidate, self.revision)
 
     def test_lock_fails_immediately_when_an_update_is_in_progress(self):
         manager = ManagedInstaller(self.paths, "https://example.test/tiers.git")

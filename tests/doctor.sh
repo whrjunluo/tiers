@@ -20,6 +20,16 @@ echo "$out" | grep -q "Figma fidelity: missing" || { echo "FAIL: should report m
 echo "$out" | grep -q "Adversarial review: built-in" || { echo "FAIL: should report built-in adversarial review fallback"; echo "$out"; exit 1; }
 echo "$out" | grep -q "No automatic install was run" || { echo "FAIL: doctor must not install by default"; echo "$out"; exit 1; }
 
+BROKEN_PLUGIN="$SBOX/broken-plugin"
+mkdir -p "$BROKEN_PLUGIN/skills" "$BROKEN_PLUGIN/scripts"
+cp "$HERE/scripts/dependency-doctor.sh" "$BROKEN_PLUGIN/scripts/dependency-doctor.sh"
+cp -R "$HERE/skills/dev-workflow" "$BROKEN_PLUGIN/skills/dev-workflow"
+cp -R "$HERE/skills/grill-me" "$BROKEN_PLUGIN/skills/grill-me"
+cp -R "$HERE/skills/external-agent" "$BROKEN_PLUGIN/skills/external-agent"
+out_missing_grilling="$(DEV_WORKFLOW_PLUGIN_ROOT="$BROKEN_PLUGIN" bash "$HERE/bin/doctor" --repo "$REPO" --codex-home "$CODEX_HOME" --platform codex)"
+echo "$out_missing_grilling" | grep -q "Capability level: broken" || { echo "FAIL: missing grilling should break base capability"; echo "$out_missing_grilling"; exit 1; }
+echo "$out_missing_grilling" | grep -q "Built-in skills: missing (grilling)" || { echo "FAIL: doctor should name missing grilling"; echo "$out_missing_grilling"; exit 1; }
+
 BIN="$SBOX/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env sh\nexit 0\n' > "$BIN/codex"

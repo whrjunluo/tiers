@@ -19,6 +19,7 @@ die() { echo "✗ $1" >&2; exit 1; }
 
 [ -d "$PLUGIN_ROOT/skills/dev-workflow" ] || die "Missing skills/dev-workflow in $PLUGIN_ROOT"
 [ -d "$PLUGIN_ROOT/skills/grill-me" ] || die "Missing skills/grill-me in $PLUGIN_ROOT"
+[ -d "$PLUGIN_ROOT/skills/grilling" ] || die "Missing skills/grilling in $PLUGIN_ROOT"
 [ -d "$PLUGIN_ROOT/skills/external-agent" ] || die "Missing skills/external-agent in $PLUGIN_ROOT"
 
 timestamp() { date +%Y%m%d-%H%M%S; }
@@ -44,6 +45,7 @@ install_links() {
   mkdir -p "$skills_dir"
   link_or_backup "$PLUGIN_ROOT/skills/dev-workflow" "$skills_dir/dev-workflow" "$backup_root"
   link_or_backup "$PLUGIN_ROOT/skills/grill-me" "$skills_dir/grill-me" "$backup_root"
+  link_or_backup "$PLUGIN_ROOT/skills/grilling" "$skills_dir/grilling" "$backup_root"
   link_or_backup "$PLUGIN_ROOT/skills/external-agent" "$skills_dir/external-agent" "$backup_root"
 }
 
@@ -69,12 +71,12 @@ add_companion() {
   fi
 }
 have_skill_dir '*superpowers*' || add_companion obra/superpowers "superpowers（L1 完整 skill 链）"
-have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-docs（内置 grill-me 的可选升级）"
+have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-docs（内置 grilling 的可选升级）"
 
 TRAE_HOME="$TRAE_HOME_DIR" "$PLUGIN_ROOT/bin/doctor" --platform trae || true
 
 echo "✓ Installed dev-workflow for TRAE"
 echo "✓ Plugin: $PLUGIN_ROOT"
-echo "✓ Skills: $TRAE_HOME_DIR/skills/dev-workflow, $TRAE_HOME_DIR/skills/grill-me, $TRAE_HOME_DIR/skills/external-agent"
+echo "✓ Skills: $TRAE_HOME_DIR/skills/dev-workflow, $TRAE_HOME_DIR/skills/grill-me, $TRAE_HOME_DIR/skills/grilling, $TRAE_HOME_DIR/skills/external-agent"
 echo "✓ Data:   ${DEV_WORKFLOW_DATA:-$HOME/.dev-workflow}（跨工具共享）"
 echo "Restart TRAE IDE or TRAE CLI to reload the skill index."

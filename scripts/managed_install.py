@@ -263,6 +263,7 @@ class ManagedInstaller:
             "skills/dev-workflow/SKILL.md",
             "skills/external-agent/SKILL.md",
             "skills/grill-me/SKILL.md",
+            "skills/grilling/SKILL.md",
         )
         for relative in required_files:
             if not (candidate / relative).is_file():

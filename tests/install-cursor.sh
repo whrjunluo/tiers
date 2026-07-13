@@ -11,6 +11,7 @@ bash "$HERE/bin/install-cursor" --cursor-home "$CURSOR_HOME" --yes >/dev/null
 
 [ -L "$CURSOR_HOME/skills/dev-workflow" ] || { echo "FAIL: dev-workflow skill link missing"; exit 1; }
 [ -L "$CURSOR_HOME/skills/grill-me" ] || { echo "FAIL: grill-me skill link missing"; exit 1; }
+[ -L "$CURSOR_HOME/skills/grilling" ] || { echo "FAIL: grilling skill link missing"; exit 1; }
 [ -L "$CURSOR_HOME/skills/external-agent" ] || { echo "FAIL: external-agent skill link missing"; exit 1; }
 ls "$CURSOR_HOME/skills-backup"/dev-workflow.* >/dev/null || { echo "FAIL: old skill not backed up"; exit 1; }
 

@@ -2,7 +2,7 @@
 # Install this plugin into Cursor on the current machine.
 #
 # Cursor 原生读取 skill 目录（~/.cursor/skills 及兼容的 ~/.claude、~/.codex），
-# 故这里把三个 skill 软链进 ~/.cursor/skills/，并初始化跨工具统一的全局数据区。
+# 故这里把四个 skill 软链进 ~/.cursor/skills/，并初始化跨工具统一的全局数据区。
 #
 # 关于 hook：Cursor 的 beforeSubmitPrompt（对应 Claude 的 UserPromptSubmit）只能
 # 放行/拦截、无法向模型注入上下文，故不安装进化提醒 hook —— 该能力由常驻的
@@ -27,6 +27,8 @@ die() { echo "✗ $1" >&2; exit 1; }
 
 [ -f "$PLUGIN_ROOT/.cursor-plugin/plugin.json" ] || die "Missing .cursor-plugin/plugin.json in $PLUGIN_ROOT"
 [ -d "$PLUGIN_ROOT/skills/dev-workflow" ] || die "Missing skills/dev-workflow in $PLUGIN_ROOT"
+[ -d "$PLUGIN_ROOT/skills/grill-me" ] || die "Missing skills/grill-me in $PLUGIN_ROOT"
+[ -d "$PLUGIN_ROOT/skills/grilling" ] || die "Missing skills/grilling in $PLUGIN_ROOT"
 [ -d "$PLUGIN_ROOT/skills/external-agent" ] || die "Missing skills/external-agent in $PLUGIN_ROOT"
 
 timestamp() { date +%Y%m%d-%H%M%S; }
@@ -52,6 +54,7 @@ install_links() {
   mkdir -p "$skills_dir"
   link_or_backup "$PLUGIN_ROOT/skills/dev-workflow" "$skills_dir/dev-workflow" "$backup_root"
   link_or_backup "$PLUGIN_ROOT/skills/grill-me" "$skills_dir/grill-me" "$backup_root"
+  link_or_backup "$PLUGIN_ROOT/skills/grilling" "$skills_dir/grilling" "$backup_root"
   link_or_backup "$PLUGIN_ROOT/skills/external-agent" "$skills_dir/external-agent" "$backup_root"
 }
 
@@ -79,11 +82,11 @@ add_companion() { # $1=repo  $2=display
   fi
 }
 have_skill_dir '*superpowers*' || add_companion obra/superpowers "superpowers（L1 完整 skill 链）"
-have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-docs（内置 grill-me 的可选升级）"
+have_skill_dir grill-with-docs || add_companion mattpocock/skills "grill-with-docs（内置 grilling 的可选升级）"
 
 echo "✓ Installed dev-workflow for Cursor"
 echo "✓ Plugin: $PLUGIN_ROOT"
-echo "✓ Skills: $CURSOR_HOME_DIR/skills/dev-workflow, $CURSOR_HOME_DIR/skills/grill-me, $CURSOR_HOME_DIR/skills/external-agent"
+echo "✓ Skills: $CURSOR_HOME_DIR/skills/dev-workflow, $CURSOR_HOME_DIR/skills/grill-me, $CURSOR_HOME_DIR/skills/grilling, $CURSOR_HOME_DIR/skills/external-agent"
 echo "✓ Data:   ${DEV_WORKFLOW_DATA:-$HOME/.dev-workflow}（跨工具共享）"
 echo "ℹ 进化提醒在 Cursor 由常驻 skill 兜底（Cursor 不支持 prompt 提交时注入上下文，故无 hook）。"
 echo "Reload Window 或完全重启 Cursor，让 skill 索引重新加载。"
