@@ -9,7 +9,7 @@
     "allowed_tiers": ["L2", "L3"],
     "required_gates": ["understanding", "tdd"],
     "forbidden_claims": ["测试已经通过"],
-    "must_pause_before": []
+    "must_pause_before": ["complete"]
   },
   "limits": {"max_continuations": 1, "token_budget": 8000}
 }
