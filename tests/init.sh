@@ -3,10 +3,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 SBOX="$(mktemp -d)"; export HOME="$SBOX/home"; mkdir -p "$HOME"
 REPO="$SBOX/repo"; mkdir -p "$REPO"; (cd "$REPO" && git init -q)
-export CODEX_HOME="$HOME/.codex"
-export CODEX_PLUGIN_ROOT="$HERE"
+export TRAE_HOME="$HOME/.trae-cn"
+export TRAE_PLUGIN_ROOT="$HERE"
 
-bash "$HERE/bin/init" --repo "$REPO" --yes >/dev/null
+out="$(bash "$HERE/bin/init" --repo "$REPO" --yes)"
+echo "$out" | grep -q "Platform: trae" || { echo "FAIL: init 未识别 TRAE 平台"; echo "$out"; exit 1; }
 # Data dir and LEARNINGS should be created in the unified cross-tool data dir
 [ -f "$HOME/.dev-workflow/LEARNINGS.md" ] || { echo "FAIL: 数据区未建"; exit 1; }
 # .workflow-state.yaml should be in repo .gitignore

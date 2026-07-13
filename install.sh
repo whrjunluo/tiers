@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap a managed dev-workflow installation for Codex and/or Cursor.
+# Bootstrap a managed dev-workflow installation for Codex, Cursor, and/or TRAE.
 set -euo pipefail
 
 DEFAULT_REPO_URL="https://github.com/whrjunluo/tiers.git"
@@ -10,7 +10,7 @@ INSTALL_DEPS=0
 
 die() { echo "dev-workflow installer: $*" >&2; exit 1; }
 select_platform() {
-  [ -z "$PLATFORM" ] || die "select exactly one of --codex, --cursor, or --all"
+  [ -z "$PLATFORM" ] || die "select exactly one of --codex, --cursor, --trae, or --all"
   PLATFORM="$1"
 }
 
@@ -18,6 +18,7 @@ while [ "${1:-}" ]; do
   case "$1" in
     --codex) select_platform codex; shift ;;
     --cursor) select_platform cursor; shift ;;
+    --trae) select_platform trae; shift ;;
     --all) select_platform all; shift ;;
     --channel)
       [ -n "${2:-}" ] || die "--channel requires stable or edge"
@@ -29,7 +30,7 @@ while [ "${1:-}" ]; do
   esac
 done
 
-[ -n "$PLATFORM" ] || die "select exactly one of --codex, --cursor, or --all"
+[ -n "$PLATFORM" ] || die "select exactly one of --codex, --cursor, --trae, or --all"
 case "$CHANNEL" in stable|edge) ;; *) die "channel must be stable or edge" ;; esac
 command -v git >/dev/null 2>&1 || die "git is required"
 command -v python3 >/dev/null 2>&1 || die "python3 is required"

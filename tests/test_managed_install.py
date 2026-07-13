@@ -142,6 +142,7 @@ class CandidateAndActivationTests(unittest.TestCase):
         for relative in (
             "bin/install-codex",
             "bin/install-cursor",
+            "bin/install-trae",
             "bin/doctor",
             "bin/dev-workflow",
             "skills/dev-workflow/SKILL.md",
@@ -198,12 +199,12 @@ class CandidateAndActivationTests(unittest.TestCase):
         manager.run_platform_installers = mock.Mock()
         manager.run_doctor = mock.Mock()
 
-        state = manager.activate_candidate(candidate, self.revision, ["cursor", "codex"])
+        state = manager.activate_candidate(candidate, self.revision, ["trae", "cursor", "codex"])
 
         self.assertEqual(candidate.resolve(), self.paths.current.resolve())
         self.assertEqual(1, state["schema_version"])
         self.assertEqual("stable", state["channel"])
-        self.assertEqual(["codex", "cursor"], state["platforms"])
+        self.assertEqual(["codex", "cursor", "trae"], state["platforms"])
         self.assertEqual("refs/tags/v0.7.0", state["active_ref"])
         self.assertEqual(self.commit, state["active_commit"])
         self.assertEqual("0.7.0", state["manifest_version"])

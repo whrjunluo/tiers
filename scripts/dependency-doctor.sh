@@ -2,10 +2,11 @@
 # Dependency and capability doctor for dev-workflow.
 set -euo pipefail
 
-PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}"
+PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CURSOR_PLUGIN_ROOT:-${TRAE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}}}"
 
 REPO="$PWD"
 CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+TRAE_HOME_DIR="${TRAE_HOME:-$HOME/.trae-cn}"
 DEV_WORKFLOW_DATA_DIR="${DEV_WORKFLOW_DATA:-$HOME/.dev-workflow}"
 PLATFORM=""
 INSTALL_DEPS=0
@@ -14,6 +15,7 @@ while [ "${1:-}" ]; do
   case "$1" in
     --repo) REPO="$2"; shift 2 ;;
     --codex-home) CODEX_HOME_DIR="$2"; shift 2 ;;
+    --trae-home) TRAE_HOME_DIR="$2"; shift 2 ;;
     --platform) PLATFORM="$2"; shift 2 ;;
     --install-deps) INSTALL_DEPS=1; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -23,6 +25,10 @@ done
 if [ -z "$PLATFORM" ]; then
   if [ -n "${CODEX_PLUGIN_ROOT:-}" ] || [ -n "${CODEX_HOME:-}" ]; then
     PLATFORM=codex
+  elif [ -n "${CURSOR_PLUGIN_ROOT:-}" ] || [ -n "${CURSOR_HOME:-}" ]; then
+    PLATFORM=cursor
+  elif [ -n "${TRAE_PLUGIN_ROOT:-}" ] || [ -n "${TRAE_HOME:-}" ]; then
+    PLATFORM=trae
   else
     PLATFORM=claude-code
   fi
@@ -32,7 +38,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 skill_present() {
   local pattern="$1"
-  find "$CODEX_HOME_DIR/skills" "$HOME/.claude" -maxdepth 6 -type d -name "$pattern" 2>/dev/null | grep -q .
+  find "$CODEX_HOME_DIR/skills" "$TRAE_HOME_DIR/skills" "$HOME/.traecli/skills" "$HOME/.agents/skills" "$HOME/.claude" -maxdepth 6 -type d -name "$pattern" 2>/dev/null | grep -q .
 }
 
 status() {

@@ -2,7 +2,7 @@
 # dev-workflow 安装器：建数据区、确保 gitignore、引导/可选安装伴侣依赖、检测 codegraph。
 # 默认只「检测 + 打印安装命令」；加 --install-deps 才真正动手装可脚本化的依赖（opt-in）。
 set -euo pipefail
-PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CURSOR_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}}"
+PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${CURSOR_PLUGIN_ROOT:-${TRAE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}}}}}"
 source "$PLUGIN_ROOT/scripts/lib.sh"
 
 REPO="$PWD"; YES=0; INSTALL_DEPS=0
@@ -18,6 +18,8 @@ if [ -n "${CODEX_PLUGIN_ROOT:-}" ] || [ -n "${CODEX_HOME:-}" ]; then
   PLATFORM=codex
 elif [ -n "${CURSOR_PLUGIN_ROOT:-}" ] || [ -n "${CURSOR_HOME:-}" ]; then
   PLATFORM=cursor
+elif [ -n "${TRAE_PLUGIN_ROOT:-}" ] || [ -n "${TRAE_HOME:-}" ]; then
+  PLATFORM=trae
 else
   PLATFORM=claude-code
 fi
@@ -43,7 +45,9 @@ CODEX_HOME="${CODEX_HOME:-}" "$PLUGIN_ROOT/scripts/dependency-doctor.sh" "${doct
 # 4. codegraph MCP（CLI 缺失时 doctor 已提示/安装；这里只做项目级注册）
 if have code-review-graph; then
   echo "✓ code-review-graph 可用 —— codegraph 判级校验已就绪（Mode A）"
-  if [ "$YES" = 1 ] || { read -rp "为本 repo 注册 codegraph MCP（解锁事前依赖查询 Mode B）? [y/N] " a; [ "$a" = y ]; }; then
+  if [ "$PLATFORM" = trae ] && [ -z "${DEV_WORKFLOW_CODEGRAPH_PLATFORM:-}" ]; then
+    echo "ℹ code-review-graph 暂无 TRAE 平台注册目标，跳过 MCP 自动注册；仍可使用 CLI 判级校验。"
+  elif [ "$YES" = 1 ] || { read -rp "为本 repo 注册 codegraph MCP（解锁事前依赖查询 Mode B）? [y/N] " a; [ "$a" = y ]; }; then
     plat="${DEV_WORKFLOW_CODEGRAPH_PLATFORM:-$PLATFORM}"
     (cd "$REPO" && code-review-graph install --platform "$plat" --no-hooks --no-skills --no-instructions -y) || true
   fi

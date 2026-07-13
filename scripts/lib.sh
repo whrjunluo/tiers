@@ -9,6 +9,8 @@ dw_plugin_root() {
     printf '%s' "$CLAUDE_PLUGIN_ROOT"
   elif [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
     printf '%s' "$CURSOR_PLUGIN_ROOT"
+  elif [ -n "${TRAE_PLUGIN_ROOT:-}" ]; then
+    printf '%s' "$TRAE_PLUGIN_ROOT"
   else
     cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
   fi
@@ -22,7 +24,7 @@ dw_legacy_data_dirs() {
 }
 
 dw_data_dir() {
-  # 跨工具统一一份全局数据区，方便 AI 自我进化时所有客户端（Claude / Codex / Cursor）
+  # 跨工具统一一份全局数据区，方便 AI 自我进化时所有客户端（Claude / Codex / Cursor / TRAE）
   # 共享同一份 LEARNINGS.md。可用 DEV_WORKFLOW_DATA 显式覆盖（测试 / 自定义）。
   local d
   if [ -n "${DEV_WORKFLOW_DATA:-}" ]; then

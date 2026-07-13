@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/whrjunluo/tiers/actions/workflows/ci.yml/badge.svg)](https://github.com/whrjunluo/tiers/actions/workflows/ci.yml)
 
-> 按风险与验证深度给开发任务分级（L0–L4）并路由到对应工作流的 Claude Code / Codex 插件。Claude Code 里通过 `/` 菜单使用；Codex 里会在开发需求中自动触发。
+> 按风险与验证深度给开发任务分级（L0–L4）并路由到对应工作流的 Claude Code / Codex / Cursor / TRAE 开发工作流。Claude Code 里通过 `/` 菜单使用；Codex、Cursor 和 TRAE 里会在开发需求中自动触发。
 
 接到一个开发需求，先判它属于哪一级（从 L0 大型改造到 L4 文案微调），再走对应的工作流——减少“小改动当大事做”的过度工程，也减少“大改动当小事做”的漏测回归。插件还能跨 session 续行、按你的纠正自我进化，并可选接入 codegraph 做客观判级。
 
@@ -73,6 +73,26 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
 
 > Cursor 也认 `.cursor-plugin/plugin.json`，所以本仓库同时是一个合法的 Cursor 插件；若日后上架 Cursor Marketplace 或用本地插件目录（`~/.cursor/plugins/local/`）安装，同一份 `skills/` 可直接复用。Claude Code 不由这个安装器管理，继续使用上面的 Marketplace 流程。
 
+### TRAE（一行安装）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
+  | bash -s -- --trae
+```
+
+安装器按 TRAE 官方全局 Skill 目录把三个内置 Skill 链接到 `~/.trae-cn/skills/`，同时兼容 TRAE IDE 与 TRAE CLI 读取。装完后完全重启 TRAE IDE 或 TRAE CLI，让 Skill 索引重新加载。
+
+- 验证：在 TRAE 的 Skill 面板或 TRAE CLI `/skills` 中看到 `dev-workflow` / `grill-me` / `external-agent`，也可以直接描述开发需求验证自动判级。
+- 同样支持 `--install-deps` 一并安装伴侣 Skill。
+- 可用 `TRAE_HOME` 覆盖默认的 `~/.trae-cn`；例如测试或多配置场景可指定独立目录。
+
+同时安装 Codex、Cursor 和 TRAE：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
+  | bash -s -- --all
+```
+
 ### 检查后再安装
 
 不想直接 pipe 到 shell 时，先下载检查：
@@ -80,7 +100,7 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh
 less install.sh
-bash install.sh --codex
+bash install.sh --trae
 ```
 
 安装器需要 `bash`、`git` 和 `python3`。可用 `DEV_WORKFLOW_REPO_URL`、`DEV_WORKFLOW_INSTALL_ROOT`、`DEV_WORKFLOW_BIN_DIR` 覆盖远端和安装路径；不会编辑或迁移 `~/.dev-workflow/` 中的学习记录与 provider 健康数据。
@@ -95,11 +115,12 @@ dev-workflow update                    # 按已记录 channel 更新已安装平
 dev-workflow update --channel edge     # 切换到 origin/main
 dev-workflow update --channel stable   # 切回最新正式 release
 dev-workflow install cursor            # 在现有安装上增加 Cursor
+dev-workflow install trae              # 在现有安装上增加 TRAE
 dev-workflow install all --install-deps
 dev-workflow doctor --repo <你的项目路径>
 ```
 
-候选版本会先校验三个 manifest、Git commit、tag/version 和必需文件，再原子切换 `current`。平台安装或 doctor 失败时恢复旧版本和旧状态；旧版本目录保留用于诊断。成功更新不会删除 `~/.dev-workflow/` 数据，完成后按提示重启 Codex 或 Reload Window。
+候选版本会先校验三个 manifest、Git commit、tag/version 和必需文件，再原子切换 `current`。平台安装或 doctor 失败时恢复旧版本和旧状态；旧版本目录保留用于诊断。成功更新不会删除 `~/.dev-workflow/` 数据，完成后按提示重启 Codex、Reload Window 或重启 TRAE。
 
 ### 从源码维护
 
@@ -108,9 +129,11 @@ dev-workflow doctor --repo <你的项目路径>
 ```bash
 bash bin/install-codex --install-deps
 bash bin/install-cursor
+bash bin/install-trae
 bash bin/update --codex          # 只更新 Codex
 bash bin/update --cursor         # 只更新 Cursor
-bash bin/update --all            # 两端都更新
+bash bin/update --trae           # 只更新 TRAE
+bash bin/update --all            # Codex、Cursor、TRAE 三端都更新
 ```
 
 省略平台参数时会自动更新当前检测到的安装。需要先从远端拉取再刷新时加 `--pull`；为避免覆盖本地工作，dirty worktree 会拒绝拉取：
@@ -139,7 +162,7 @@ bash bin/doctor --repo <你的项目路径>
 2. 检测到 `code-review-graph` 时，可选为本项目注册 codegraph MCP（解锁 Mode B 事前依赖查询）
 
 ```bash
-# Codex / 已 clone 源码：在你的 clone 目录下
+# Codex / Cursor / TRAE / 已 clone 源码：在你的 clone 目录下
 bash bin/init [--repo <项目路径>] [--yes]
 
 # Claude Code（插件装在缓存里）：让 dev-workflow skill 帮你初始化当前项目即可
@@ -307,7 +330,7 @@ Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和
 
 ## 平台兼容
 
-同一份 `skills/`、`scripts/` 服务三端：Claude Code 通过 `.claude-plugin/`，Codex 通过 `.codex-plugin/`，Cursor 通过 `.cursor-plugin/`（skill 链接进 `~/.cursor/skills/`）。`hooks.json` 的"判级纠正提醒"hook 仅 Claude/Codex 启用；Cursor 不支持 prompt 提交时注入上下文，改由常驻 skill 兜底。脚本用 `DEV_WORKFLOW_PLUGIN_ROOT` / `CODEX_PLUGIN_ROOT` / `CLAUDE_PLUGIN_ROOT` / `CURSOR_PLUGIN_ROOT` 统一解析路径，无任何硬编码绝对路径。
+同一份 `skills/`、`scripts/` 服务四端：Claude Code 通过 `.claude-plugin/`，Codex 通过 `.codex-plugin/`，Cursor 通过 `.cursor-plugin/`（Skill 链接进 `~/.cursor/skills/`），TRAE 将 Skill 链接进官方全局目录 `~/.trae-cn/skills/`。`hooks.json` 的"判级纠正提醒"hook 仅 Claude/Codex 启用；Cursor 和 TRAE 改由常驻 Skill 兜底。脚本用 `DEV_WORKFLOW_PLUGIN_ROOT` 以及各平台插件根变量统一解析路径，无任何硬编码绝对路径。
 
 ## License
 
