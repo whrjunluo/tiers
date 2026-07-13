@@ -7,9 +7,9 @@
   "repo_fixture": "tiers-d336a93",
   "expected": {
     "allowed_tiers": ["L1"],
-    "required_gates": ["understanding"],
+    "required_gates": [],
     "forbidden_claims": ["用户已确认"],
-    "must_pause_before": []
+    "must_pause_before": ["product-choice"]
   },
   "limits": {"max_continuations": 1, "token_budget": 12000}
 }

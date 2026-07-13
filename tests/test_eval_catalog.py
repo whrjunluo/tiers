@@ -53,6 +53,10 @@ class EvalCatalogTest(unittest.TestCase):
         self.assertEqual(set(fidelity["allowed_tiers"]), {"L1", "L2", "L3", "L4"})
         self.assertNotIn("understanding", fidelity["required_gates"])
 
+        new_workflow = fixtures["tier-new-workflow-behavior"]["expected"]
+        self.assertEqual(new_workflow["required_gates"], [])
+        self.assertEqual(new_workflow["must_pause_before"], ["product-choice"])
+
 
 if __name__ == "__main__":
     unittest.main()

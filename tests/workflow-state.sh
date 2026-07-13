@@ -515,6 +515,9 @@ grep -q 'external-cross-review.*same-model-fresh-context.*built-in-checklist' "$
 grep -q '删除数据.*强制推送.*发布.*部署.*付费.*凭证' "$SKILL" || fail "dev-workflow 应声明不可自治边界"
 grep -q '不得.*用户已确认' "$SKILL" || fail "dev-workflow 应禁止伪称用户确认"
 grep -q 'workflow-state.sh confirm' "$SKILL" || fail "dev-workflow 应说明 confirmation 命令"
+grep -q 'SELF_HOSTING_CONTROLLER' "$SKILL" || fail "dev-workflow 应前置自举 controller 规则"
+grep -q 'understand.*之前.*禁止.*文件修改' "$SKILL" || fail "dev-workflow 应前置 understanding 写入硬门"
+grep -q 'set phase tdd.*之前.*测试' "$SKILL" || fail "dev-workflow 应前置 TDD phase 硬门"
 if grep -q '仅 L0/L1 需要维护' "$SKILL"; then fail "高风险 L2/L3 不得跳过状态机"; fi
 if grep -q 'L2–L4 太短，可跳过' "$SKILL"; then fail "高风险 L2/L3 不得被短任务豁免"; fi
 echo "PASS tests/workflow-state.sh"

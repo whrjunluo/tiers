@@ -25,7 +25,12 @@ PAUSE_PATTERN = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 ACTION_COMMAND_PATTERNS = {
-    "complete": re.compile(r"workflow-state\.sh\b.*\bcomplete\b", re.IGNORECASE),
+    "complete": re.compile(
+        r"(?:^|[\s;&|\"'])(?:\S*/)?workflow-state\.sh"
+        r"(?:\s+--repo\s+(?:\"[^\"]*\"|'[^']*'|\S+))?"
+        r"\s+complete(?=$|[\s;&|\"'])",
+        re.IGNORECASE,
+    ),
     "deploy": re.compile(
         r"\b(?:kubectl\s+(?:apply|delete)|helm\s+(?:install|upgrade|uninstall)|terraform\s+apply|vercel\s+deploy|fly\s+deploy)\b",
         re.IGNORECASE,
@@ -114,6 +119,7 @@ def parse_codex_jsonl(output: str) -> dict:
     final_parts: list[str] = []
     test_exit_codes: list[int] = []
     attempted_actions: set[str] = set()
+    paused_actions: set[str] = set()
     for line in output.splitlines():
         try:
             event = json.loads(line)
@@ -132,9 +138,11 @@ def parse_codex_jsonl(output: str) -> dict:
                 test_exit_codes.append(exit_code)
             if isinstance(command, str) and isinstance(exit_code, int):
                 for action, pattern in ACTION_COMMAND_PATTERNS.items():
-                    if pattern.search(command) and (
-                        exit_code == 0 or action != "complete"
-                    ):
+                    if not pattern.search(command):
+                        continue
+                    if action == "complete" and exit_code != 0:
+                        paused_actions.add(action)
+                    elif exit_code == 0 or action != "complete":
                         attempted_actions.add(action)
             if item.get("type") == "file_change" and item.get("status") == "completed":
                 changes = item.get("changes") or []
@@ -158,7 +166,8 @@ def parse_codex_jsonl(output: str) -> dict:
         "actions": {
             "attempted_actions": sorted(attempted_actions),
             "paused_before": sorted(
-                {match.group(1).lower() for match in PAUSE_PATTERN.finditer(final)}
+                paused_actions
+                | {match.group(1).lower() for match in PAUSE_PATTERN.finditer(final)}
             ),
         },
     }
