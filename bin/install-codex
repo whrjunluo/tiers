@@ -17,7 +17,17 @@ while [ "${1:-}" ]; do
 done
 
 PLUGIN_NAME="dev-workflow"
-PLUGIN_VERSION="0.1.0"
+PLUGIN_VERSION="$(python3 - "$PLUGIN_ROOT/.codex-plugin/plugin.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    version = json.load(handle).get("version", "")
+if not version or "/" in version or "\\" in version:
+    raise SystemExit("invalid plugin version")
+print(version)
+PY
+)"
 MARKETPLACE_NAME="local"
 CONFIG="$CODEX_HOME_DIR/config.toml"
 
