@@ -68,6 +68,24 @@ bash bin/install-cursor
 
 > Cursor 也认 `.cursor-plugin/plugin.json`，所以本仓库同时是一个合法的 Cursor 插件；若日后上架 Cursor Marketplace 或用本地插件目录（`~/.cursor/plugins/local/`）安装，同一份 `skills/` 可直接复用。
 
+### 更新本机安装
+
+源码 checkout 已经是目标版本时，用一个命令刷新插件缓存和 skill 软链：
+
+```bash
+bash bin/update --codex          # 只更新 Codex
+bash bin/update --cursor         # 只更新 Cursor
+bash bin/update --all            # 两端都更新
+```
+
+省略平台参数时会自动更新当前检测到的安装。需要先从远端拉取再刷新时加 `--pull`；为避免覆盖本地工作，dirty worktree 会拒绝拉取：
+
+```bash
+bash bin/update --pull --codex
+```
+
+更新命令从 plugin manifest 读取版本、重建对应缓存链接，并保留 `~/.dev-workflow/` 中的学习记录和 provider 健康状态。完成后重启 Codex/新开会话，或在 Cursor 执行 Reload Window。
+
 安装后可随时跑 doctor 看当前能力等级：
 
 ```bash

@@ -2,7 +2,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "=== 全量测试 ==="
-for t in lib learnings workflow-state codegraph-judge external-agent doctor hook init install-codex install-cursor; do
+for t in lib learnings workflow-state codegraph-judge external-agent doctor hook init install-codex install-cursor update; do
   echo "--- $t ---"
   bash "$HERE/$t.sh"
 done

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Refresh an existing local installation from this checkout.
+set -euo pipefail
+
+PLUGIN_ROOT="${DEV_WORKFLOW_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+CURSOR_HOME_DIR="${CURSOR_HOME:-$HOME/.cursor}"
+UPDATE_CODEX=0
+UPDATE_CURSOR=0
+PLATFORM_SELECTED=0
+PULL=0
+INSTALL_DEPS=0
+
+die(){ echo "✗ $1" >&2; exit 1; }
+
+while [ "${1:-}" ]; do
+  case "$1" in
+    --codex) UPDATE_CODEX=1; PLATFORM_SELECTED=1; shift ;;
+    --cursor) UPDATE_CURSOR=1; PLATFORM_SELECTED=1; shift ;;
+    --all) UPDATE_CODEX=1; UPDATE_CURSOR=1; PLATFORM_SELECTED=1; shift ;;
+    --pull) PULL=1; shift ;;
+    --install-deps) INSTALL_DEPS=1; shift ;;
+    --codex-home) CODEX_HOME_DIR="$2"; shift 2 ;;
+    --cursor-home) CURSOR_HOME_DIR="$2"; shift 2 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+done
+
+if [ "$PLATFORM_SELECTED" = 0 ]; then
+  if [ -L "$CODEX_HOME_DIR/skills/dev-workflow" ] || [ -e "$CODEX_HOME_DIR/skills/dev-workflow" ] || \
+     grep -q '\[plugins\."dev-workflow@local"\]' "$CODEX_HOME_DIR/config.toml" 2>/dev/null; then
+    UPDATE_CODEX=1
+  fi
+  if [ -L "$CURSOR_HOME_DIR/skills/dev-workflow" ] || [ -e "$CURSOR_HOME_DIR/skills/dev-workflow" ]; then
+    UPDATE_CURSOR=1
+  fi
+fi
+
+[ "$UPDATE_CODEX" = 1 ] || [ "$UPDATE_CURSOR" = 1 ] || \
+  die "No existing Codex/Cursor installation detected. Run bin/install-codex or bin/install-cursor first."
+
+if [ "$PULL" = 1 ]; then
+  git -C "$PLUGIN_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "--pull requires a Git checkout"
+  [ -z "$(git -C "$PLUGIN_ROOT" status --porcelain)" ] || die "--pull requires a clean worktree"
+  git -C "$PLUGIN_ROOT" pull --ff-only
+fi
+
+version="$(python3 - "$PLUGIN_ROOT/.codex-plugin/plugin.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    print(json.load(handle)["version"])
+PY
+)"
+
+if [ "$UPDATE_CODEX" = 1 ]; then
+  if [ "$INSTALL_DEPS" = 1 ]; then
+    bash "$PLUGIN_ROOT/bin/install-codex" --codex-home "$CODEX_HOME_DIR" --yes --install-deps
+  else
+    bash "$PLUGIN_ROOT/bin/install-codex" --codex-home "$CODEX_HOME_DIR" --yes
+  fi
+fi
+if [ "$UPDATE_CURSOR" = 1 ]; then
+  if [ "$INSTALL_DEPS" = 1 ]; then
+    bash "$PLUGIN_ROOT/bin/install-cursor" --cursor-home "$CURSOR_HOME_DIR" --yes --install-deps
+  else
+    bash "$PLUGIN_ROOT/bin/install-cursor" --cursor-home "$CURSOR_HOME_DIR" --yes
+  fi
+fi
+
+echo "✓ Updated dev-workflow $version from $PLUGIN_ROOT"
+if [ "$UPDATE_CODEX" = 1 ]; then
+  echo "Restart Codex or open a new conversation to reload plugin hooks and skills."
+fi
+if [ "$UPDATE_CURSOR" = 1 ]; then
+  echo "Reload Window or restart Cursor to reload skills."
+fi
