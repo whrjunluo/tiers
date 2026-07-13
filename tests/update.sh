@@ -20,7 +20,10 @@ out="$(bash "$HERE/bin/update" --codex --cursor --trae)"
 [ "$(readlink "$CODEX_HOME/skills/dev-workflow")" = "$HERE/skills/dev-workflow" ] || { echo "FAIL: Codex skill link not refreshed"; exit 1; }
 [ "$(readlink "$CURSOR_HOME/skills/dev-workflow")" = "$HERE/skills/dev-workflow" ] || { echo "FAIL: Cursor skill link not refreshed"; exit 1; }
 [ "$(readlink "$TRAE_HOME/skills/dev-workflow")" = "$HERE/skills/dev-workflow" ] || { echo "FAIL: TRAE skill link not refreshed"; exit 1; }
-echo "$out" | grep -q 'Updated dev-workflow 0.7.0' || { echo "FAIL: update summary missing"; echo "$out"; exit 1; }
+[ "$(readlink "$CODEX_HOME/skills/grilling")" = "$HERE/skills/grilling" ] || { echo "FAIL: Codex grilling skill link not refreshed"; exit 1; }
+[ "$(readlink "$CURSOR_HOME/skills/grilling")" = "$HERE/skills/grilling" ] || { echo "FAIL: Cursor grilling skill link not refreshed"; exit 1; }
+[ "$(readlink "$TRAE_HOME/skills/grilling")" = "$HERE/skills/grilling" ] || { echo "FAIL: TRAE grilling skill link not refreshed"; exit 1; }
+echo "$out" | grep -q 'Updated dev-workflow 0.8.0' || { echo "FAIL: update summary missing"; echo "$out"; exit 1; }
 echo "$out" | grep -q 'Restart TRAE' || { echo "FAIL: TRAE reload guidance missing"; echo "$out"; exit 1; }
 echo "$out" | grep -q 'Restart Codex' || { echo "FAIL: reload guidance missing"; echo "$out"; exit 1; }
 bash "$HERE/bin/update" --codex >/dev/null || { echo "FAIL: Codex-only update should exit zero"; exit 1; }

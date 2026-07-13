@@ -5,7 +5,7 @@ DEV_WORKFLOW_STATE_LOCK_ROOT="$(mktemp -d)"
 export DEV_WORKFLOW_STATE_LOCK_ROOT
 trap 'rm -rf "$DEV_WORKFLOW_STATE_LOCK_ROOT"' EXIT
 echo "=== 全量测试 ==="
-for t in lib learnings workflow-state codegraph-judge external-agent doctor hook init install-codex install-cursor install-trae update managed-install; do
+for t in lib learnings workflow-state codegraph-judge external-agent doctor hook init grilling install-codex install-cursor install-trae update managed-install; do
   echo "--- $t ---"
   bash "$HERE/$t.sh"
 done

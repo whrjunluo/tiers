@@ -174,7 +174,7 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 | 级别 | 动手前要"懂"的对象 | 没懂时 |
 |---|---|---|
 | L0 | 架构边界 / 迁移 / 回滚路径 | 留在 spec/architecture review；边界未锁定不得进入实施 |
-| L1 | 需求 / 设计（决策树分支、边界） | 进 `grill-me`；想跳过需用户点头（详见 L1 HARD-GATE） |
+| L1 | 需求 / 设计（决策树分支、边界） | 进 `grilling`；想跳过需用户点头（详见 L1 HARD-GATE） |
 | L2 | 改动的影响面 / 回归边界 / 能否写出覆盖测试 | 跑 `codegraph-judge assess` 看 affected flow / test gap，或直接读消费方；**影响面超预期（跨模块/结构性）→ 回去重判级（可能 L1/L0）** |
 | L3 | bug 的**真正根因**（不是症状冒出点） | 留在 `systematic-debugging`，别急着改；**"修复"其实是在加新行为 → 重判级（可能 L2）** |
 | L4 | （风险≈0，免） | — |
@@ -274,15 +274,15 @@ L4 微调不跑（风险≈0，白跑）。
 > ⛔ **HARD-GATE（L1 强制时序，优先级高于被插入 skill 自身的终态指令）**
 > `brainstorming` skill 的终态指令是「下一步 invoking writing-plans，不要调用其他 skill」——**这条对 L1 不成立，必须无视**。L1 在 brainstorming 之后、写/定稿 spec 之前，**必须先通过「理解度关卡」**，禁止从 brainstorm 直接跳到 spec/plan。
 > **关卡判定**：摆出决策树各分支已落到的结论、识别到的边界情况、仍未问清的开口，自评对需求的理解度（能否写出基本不返工的 spec）。
-> - **理解不足，或拿不准** → 进 `grill-me` 追问，收敛到理解足够才退出。**未通过关卡禁止写 spec / 调 `writing-plans` / 建 specs 目录。**
+> - **理解不足，或拿不准** → 进 `grilling` 追问，收敛到理解足够才退出。**未通过关卡禁止写 spec / 调 `writing-plans` / 建 specs 目录。**
 > - **自评已足够**（决策树全分支有结论、边界已探、无开口）→ 仍须**显式向用户提议「理解已足够，建议跳过深度 grill 直接写 spec」并取得用户点头**，方可跳过 grill。未经检验的信心不算通过；自己拍板跳过 = 流程违规。
 > 自检红旗：当你发现自己"准备写 spec / 准备调 writing-plans / 准备建 specs 目录"，但**本任务还没过理解度关卡**——立即停下，回到关卡。
 
 **执行步骤：**
 1. `brainstorming` skill（若可用）— 澄清需求，提出 2-3 方案，用户确认，起草设计文档到 `docs/superpowers/specs/`。若不可用，执行内置 brainstorm 协议：读项目上下文 → 提出 2-3 个方案和推荐项 → 向用户确认范围 → 写一份简短 spec 到同目录。
 2. **理解度关卡（必经）** — 按上方 HARD-GATE 判定：理解不足/拿不准 → 进第 3 步 grill；自评足够 → 向用户提议跳过、**取得点头后**直接进第 4 步。
-3. **`grill-me` skill（理解度不足时触发，本插件内置）** — 对着设计文档追问，逐个解决决策树分支、暴露边界情况，把答案回填进文档，理解收敛达标才退出。
-   > 内置 `grill-me` 是零依赖基线。若用户自行装了更强的追问 skill（如 `mattpocock/skills` 的 `grill-with-docs`，锚定 CONTEXT.md/ADR、边问边更新文档），则优先用它。
+3. **`grilling` skill（理解度不足时触发，本插件内置；`grill-me` 保留为显式调用兼容入口）** — 对着设计文档追问，逐个解决决策树分支、暴露边界情况，把答案回填进文档，理解收敛达标才退出。
+   > 内置 `grilling` 是零依赖基线。若用户自行装了更强的追问 skill（如 `mattpocock/skills` 的 `grill-with-docs`，锚定 CONTEXT.md/ADR、边问边更新文档），则优先用它。
 4. `writing-plans` skill（若可用）— 基于已收敛的设计文档写 plan 到 `docs/superpowers/plans/`。若不可用，执行内置 plan 协议：列文件影响面、逐任务写 Red/Green/Refactor 步骤、每步给命令和验收点。
 5. `test-driven-development` skill（若可用）— 先写失败测试，再实现，测试通过后提交。若不可用，执行内置 TDD 协议：先写最小失败测试并确认失败原因正确，再写实现，最后跑目标测试和全量测试。
 6. `requesting-code-review` skill（若可用）— 请求代码审查；随后按「对抗评审关卡」选择 provider。若 review skill 不可用，执行内置 review checklist：检查行为回归、缺失测试、安装/降级路径、文档承诺是否与实现一致。
@@ -290,7 +290,7 @@ L4 微调不跑（风险≈0，白跑）。
 8. `verification-before-completion` skill（若可用）— 验证功能符合 spec 后关闭任务。若不可用，执行内置 verification checklist：重跑相关测试、演练缺依赖场景、确认 README/skill/脚本口径一致。
 9. 写入本地证据文件及 `evidence.*` 字段，运行 `workflow-state.sh complete`；未通过完成门则保持当前 phase。
 
-> L0 的范围审视/架构验证阶段同样可以用 `grill-me` 追问设计；L2 只有轻量 spec，一般不必；L3/L4 无设计文档，跳过。
+> L0 的范围审视/架构验证阶段同样可以用 `grilling` 追问设计；L2 只有轻量 spec，一般不必；L3/L4 无设计文档，跳过。
 
 ---
 
