@@ -180,8 +180,14 @@ PY
 [ -L "$BOOT_ROOT/current" ] || fail "bootstrap did not create current symlink"
 [ -L "$BOOT_BIN/dev-workflow" ] || fail "bootstrap did not create global command symlink"
 [ "$(cat "$BOOT_DATA/user-note.txt")" = "keep-me" ] || fail "bootstrap changed user data"
+PYTHON_CACHE="$TMP/python-cache"
 HOME="$BOOT_HOME" DEV_WORKFLOW_INSTALL_ROOT="$BOOT_ROOT" DEV_WORKFLOW_BIN_DIR="$BOOT_BIN" \
+  PYTHONPYCACHEPREFIX="$PYTHON_CACHE" \
   "$BOOT_BIN/dev-workflow" status >/dev/null
+[ -z "$(find "$PYTHON_CACHE" -type f -name 'managed_install*.pyc' -print 2>/dev/null)" ] || \
+  fail "managed command wrote bytecode for the managed installer"
+[ -z "$(git -C "$BOOT_ROOT/versions/$STABLE_COMMIT" status --porcelain)" ] || \
+  fail "managed command wrote runtime files into the immutable candidate"
 
 old_current="$(resolved_current "$BOOT_ROOT")"
 old_state="$(cat "$BOOT_ROOT/install.json")"
