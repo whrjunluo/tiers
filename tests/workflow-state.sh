@@ -51,6 +51,47 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
   printf '%s\n' "docs/superpowers/.workflow-evidence/$name"
 }
+degraded_review_evidence(){
+  local repo="$1" name="$2" fingerprint="$3" created_at="$4" path
+  path="$repo/docs/superpowers/.workflow-evidence/$name"
+  mkdir -p "$(dirname "$path")"
+  python3 - "$path" "$fingerprint" "$created_at" <<'PY'
+import json
+import sys
+
+path, fingerprint, created_at = sys.argv[1:]
+data = {
+    "runner": "tiers.external-agent/v1",
+    "success": True,
+    "quorum": False,
+    "outcome": "degraded",
+    "review_profile": "small-fix",
+    "policy": {
+        "minimum_successes": 1,
+        "minimum_families": 1,
+        "stop_after_policy": True,
+    },
+    "artifact_sha256": "a" * 64,
+    "repository_fingerprint": fingerprint,
+    "created_at": created_at,
+    "finished_at": created_at,
+    "duration_seconds": 1.25,
+    "successful_families": ["xiaomi"],
+    "reviewers": [
+        {"agent": "mimo", "family": "xiaomi", "success": True,
+         "status": "success", "timeout_seconds": 90,
+         "duration_seconds": 1.0, "agent_messages": "focused review"},
+        {"agent": "grok", "family": "xai", "success": False,
+         "status": "cancelled", "timeout_seconds": 90,
+         "duration_seconds": 1.1,
+         "error": "stopped after small-fix policy was satisfied"},
+    ],
+}
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh)
+PY
+  printf '%s\n' "docs/superpowers/.workflow-evidence/$name"
+}
 confirmation_evidence(){
   local repo="$1" name="$2" scope="$3" path
   path="$repo/docs/superpowers/.workflow-evidence/$name"
@@ -166,6 +207,7 @@ f="$REPO/docs/superpowers/.workflow-state.yaml"
 [ "$(getf "$REPO" context.repo)" = "$(git -C "$REPO" rev-parse --show-toplevel)" ] || fail "init 应记录 repo"
 [ "$(getf "$REPO" context.branch)" = "feat/test-state" ] || fail "init 应记录 branch"
 [ "$(getf "$REPO" execution.mode)" = single ] || fail "新状态应默认 single mode"
+[ "$(getf "$REPO" execution.profile)" = standard ] || fail "新状态应默认 standard profile"
 [ "$(getf "$REPO" understanding.status)" = pending ] || fail "新状态应默认 pending understanding"
 [ "$(getf "$REPO" confirmation.status)" = pending ] || fail "新状态应默认 pending confirmation"
 [ "$(getf "$REPO" completion.workflow_version)" = 2 ] || fail "新状态应使用 workflow v2"
@@ -248,6 +290,29 @@ understand_pass understanding-l0 L0 $'result: PASS\nkind: architecture\nboundari
 understand_pass understanding-l1 L1 $'result: PASS\nkind: requirements\nacceptance: visible hard gate\nnon_goals: no model leaderboard' requirements
 understand_pass understanding-l2 L2 $'result: PASS\nkind: impact\naffected: state transitions\ntests: workflow-state suite' impact
 understand_pass understanding-l3 L3 $'result: PASS\nkind: root-cause\nreproduction: task with hash truncates\nroot_cause: comment stripping ignores quoting' root-cause
+
+# A same-objective L3 -> L1 reassessment may reuse the content-addressed root
+# cause while adding the newly required acceptance and non-goals evidence.
+REUSED="$(understanding_repo understanding-reused L3)"
+reused_root="$(evidence "$REUSED" root-cause.txt $'result: PASS\nkind: root-cause\nreproduction: failed message remains retryable\nroot_cause: send success and failure share cleanup state')"
+bash "$WS" --repo "$REUSED" understand "$reused_root" >/dev/null
+setf "$REUSED" level L1
+setf "$REUSED" context.sources user-request-expanded-acceptance
+reused_requirements="$(evidence "$REUSED" requirements.txt $'result: PASS\nkind: requirements\nacceptance: success clears input and failure remains retryable\nnon_goals: no transport changes\nreuses: docs/superpowers/.workflow-evidence/root-cause.txt')"
+bash "$WS" --repo "$REUSED" understand "$reused_requirements" >/dev/null
+[ "$(getf "$REUSED" understanding.reused_kind)" = root-cause ] || fail "L3 -> L1 应记录复用 kind"
+[ "$(getf "$REUSED" understanding.reused_evidence)" = "$reused_root" ] || fail "L3 -> L1 应记录复用 evidence"
+setf "$REUSED" phase tdd
+printf '%s\n' $'result: PASS\nkind: root-cause\nreproduction: changed\nroot_cause: tampered' > "$REUSED/$reused_root"
+expect_fail "复用的 root-cause 被篡改后不得进入 review" bash "$WS" --repo "$REUSED" set phase review
+
+REUSED_OTHER="$(understanding_repo understanding-reused-other L3)"
+other_root="$(evidence "$REUSED_OTHER" root-cause.txt $'result: PASS\nkind: root-cause\nreproduction: stable\nroot_cause: cleanup state')"
+bash "$WS" --repo "$REUSED_OTHER" understand "$other_root" >/dev/null
+setf "$REUSED_OTHER" level L1
+setf "$REUSED_OTHER" context.target scripts/unrelated-target.sh
+other_requirements="$(evidence "$REUSED_OTHER" requirements.txt $'result: PASS\nkind: requirements\nacceptance: new target\nnon_goals: none\nreuses: docs/superpowers/.workflow-evidence/root-cause.txt')"
+expect_fail "不同 target 不得复用旧 understanding" bash "$WS" --repo "$REUSED_OTHER" understand "$other_requirements"
 
 UNDERSTANDING_WRONG_KIND="$(understanding_repo understanding-wrong-kind L3)"
 setf "$UNDERSTANDING_WRONG_KIND" evidence.tests "$(evidence "$UNDERSTANDING_WRONG_KIND" understanding.txt $'result: PASS\nkind: impact\naffected: parser\ntests: state test')"
@@ -399,6 +464,35 @@ bash "$WS" --repo "$STANDARD" start next-standard L2 >/dev/null
 [ "$(getf "$STANDARD" task)" = next-standard ] || fail "start 应开启新任务"
 [ "$(getf "$STANDARD" phase)" = brainstorm ] || fail "start 应从 brainstorm 开始"
 
+# Degraded one-reviewer evidence is explicit opt-in for small-fix only.
+STANDARD_DEGRADED="$(understanding_repo standard-degraded L2)"
+setf "$STANDARD_DEGRADED" context.environment n/a
+setf "$STANDARD_DEGRADED" context.delivery local-only
+standard_degraded_understanding="$(evidence "$STANDARD_DEGRADED" understanding.txt $'result: PASS\nkind: impact\naffected: one interaction\ntests: focused suite')"
+bash "$WS" --repo "$STANDARD_DEGRADED" understand "$standard_degraded_understanding" >/dev/null
+setf "$STANDARD_DEGRADED" requirements.external_review true
+bash "$WS" --repo "$STANDARD_DEGRADED" understand "$standard_degraded_understanding" >/dev/null
+setf "$STANDARD_DEGRADED" phase review
+setf "$STANDARD_DEGRADED" evidence.tests "$(evidence "$STANDARD_DEGRADED" tests.txt $'command: focused tests\nexit_code: 0')"
+setf "$STANDARD_DEGRADED" evidence.residual_risks "$(evidence "$STANDARD_DEGRADED" risks.txt 'risk: second reviewer did not finish')"
+standard_degraded_fingerprint="$(python3 "$RUNNER" --fingerprint --cd "$STANDARD_DEGRADED")"
+standard_degraded_path="$(degraded_review_evidence "$STANDARD_DEGRADED" degraded.json "$standard_degraded_fingerprint" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"
+setf "$STANDARD_DEGRADED" evidence.external_review "$standard_degraded_path"
+expect_fail "standard profile 不得接受 one-success degraded review" bash "$WS" --repo "$STANDARD_DEGRADED" complete
+setf "$STANDARD_DEGRADED" execution.profile small-fix
+python3 - "$STANDARD_DEGRADED/$standard_degraded_path" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["reviewers"][1]["family"] = "google"
+with open(path, "w") as handle:
+    json.dump(data, handle)
+PY
+expect_fail "small-fix degraded review 仍须校验所有 reviewer family/status" bash "$WS" --repo "$STANDARD_DEGRADED" complete
+standard_degraded_path="$(degraded_review_evidence "$STANDARD_DEGRADED" degraded.json "$standard_degraded_fingerprint" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"
+bash "$WS" --repo "$STANDARD_DEGRADED" complete >/dev/null
+[ "$(getf "$STANDARD_DEGRADED" phase)" = done ] || fail "small-fix 应接受有效 one-success degraded review"
+
 # Business completion requires a real environment and real-request evidence.
 BUSINESS="$(new_repo business)"
 setf "$BUSINESS" task auth-closeout
@@ -518,6 +612,10 @@ grep -q 'workflow-state.sh confirm' "$SKILL" || fail "dev-workflow 应说明 con
 grep -q 'SELF_HOSTING_CONTROLLER' "$SKILL" || fail "dev-workflow 应前置自举 controller 规则"
 grep -q 'understand.*之前.*禁止.*文件修改' "$SKILL" || fail "dev-workflow 应前置 understanding 写入硬门"
 grep -q 'set phase tdd.*之前.*测试' "$SKILL" || fail "dev-workflow 应前置 TDD phase 硬门"
+grep -q 'small-fix' "$SKILL" || fail "dev-workflow 应声明 small-fix 快速通道"
+grep -q 'reuses:' "$SKILL" || fail "dev-workflow 应说明同目标 understanding 证据复用"
+grep -q 'checkpoint commit' "$SKILL" || fail "dev-workflow 应说明 business verify 不阻塞本地 checkpoint commit"
+grep -q '状态变化' "$SKILL" || fail "dev-workflow 应禁止无信息固定频率状态刷屏"
 if grep -q '仅 L0/L1 需要维护' "$SKILL"; then fail "高风险 L2/L3 不得跳过状态机"; fi
 if grep -q 'L2–L4 太短，可跳过' "$SKILL"; then fail "高风险 L2/L3 不得被短任务豁免"; fi
 echo "PASS tests/workflow-state.sh"

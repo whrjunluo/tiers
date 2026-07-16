@@ -110,6 +110,8 @@ python3 -c "import sys,json; d=json.load(sys.stdin); assert all(a.get('routing_p
 out="$(run --cross-review mimo,grok --cd "$SBOX/repo" --context git --format json --PROMPT "same artifact")"
 python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and d["quorum"]; assert len(d["artifact_sha256"]) == 64; assert len(d["reviewers"]) == 2; assert len(d["successful_families"]) == 2' <<<"$out" \
   || fail "valid cross-review quorum failed: $out"
+python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["outcome"] == "quorum"; assert d["review_profile"] == "standard"; assert d["finished_at"].endswith("Z"); assert d["duration_seconds"] >= 0; assert all(r["status"] == "success" and r["duration_seconds"] >= 0 for r in d["reviewers"])' <<<"$out" \
+  || fail "cross-review lifecycle evidence missing: $out"
 python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["runner"] == "tiers.external-agent/v1"' <<<"$out" \
   || fail "cross-review report must declare runner provenance"
 python3 -c 'import sys,json; d=json.load(sys.stdin); assert len(d["repository_fingerprint"]) == 64; assert d["created_at"].endswith("Z")' <<<"$out" \
@@ -126,6 +128,50 @@ grep -q 'same artifact' "$ARGS_DIR/mimo" || fail "mimo did not receive shared ar
 grep -q 'same artifact' "$ARGS_DIR/grok" || fail "grok did not receive shared artifact"
 grep -q 'git diff --cached' "$ARGS_DIR/mimo" || fail "mimo cross-review missing staged context"
 grep -q 'git diff --cached' "$ARGS_DIR/grok" || fail "grok cross-review missing staged context"
+
+# Standard cross-review starts reviewers in parallel; wall time is bounded by
+# the slowest provider rather than the sum of provider durations.
+make_slow_stub mimo 1 '{"sessionID":"M2","type":"text","part":{"id":"p1","text":"mimo parallel"}}'
+make_slow_stub grok 1 '{"text":"grok parallel","stopReason":"EndTurn","sessionId":"K2"}'
+parallel_started="$(python3 -c 'import time; print(time.monotonic())')"
+out="$(run --cross-review mimo,grok --cd "$SBOX/repo" --format json --PROMPT parallel)"
+parallel_elapsed="$(python3 -c 'import sys,time; print(time.monotonic()-float(sys.argv[1]))' "$parallel_started")"
+python3 -c 'import sys; assert float(sys.argv[1]) < 1.8, sys.argv[1]' "$parallel_elapsed" \
+  || fail "cross-review should run in parallel, elapsed=${parallel_elapsed}s"
+
+# Small-fix review uses a 90-second implicit budget and stops after the first
+# valid external opinion, preserving strict quorum=false in degraded evidence.
+make_stub mimo '{"sessionID":"M3","type":"text","part":{"id":"p1","text":"mimo first"}}'
+make_slow_stub grok 3 '{"text":"grok late","stopReason":"EndTurn","sessionId":"K3"}'
+small_started="$(python3 -c 'import time; print(time.monotonic())')"
+out="$(run --cross-review mimo,grok --review-profile small-fix --cd "$SBOX/repo" --format json --PROMPT narrow)"
+small_elapsed="$(python3 -c 'import sys,time; print(time.monotonic()-float(sys.argv[1]))' "$small_started")"
+python3 -c 'import sys; assert float(sys.argv[1]) < 1.5, sys.argv[1]' "$small_elapsed" \
+  || fail "small-fix should stop after first success, elapsed=${small_elapsed}s"
+python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and not d["quorum"]; assert d["outcome"] == "degraded"; assert d["review_profile"] == "small-fix"; assert d["policy"] == {"minimum_successes": 1, "minimum_families": 1, "stop_after_policy": True}; assert all(r["timeout_seconds"] == 90 for r in d["reviewers"]); assert any(r["status"] == "cancelled" for r in d["reviewers"])' <<<"$out" \
+  || fail "small-fix degraded evidence contract failed: $out"
+
+# SIGINT must leave machine-readable termination evidence instead of an empty
+# or half-written review artifact.
+make_slow_stub mimo 5 '{"sessionID":"M4","type":"text","part":{"id":"p1","text":"mimo late"}}'
+make_slow_stub grok 5 '{"text":"grok late","stopReason":"EndTurn","sessionId":"K4"}'
+PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --cross-review mimo,grok --cd "$SBOX/repo" \
+  --format json --PROMPT interrupted >"$SBOX/interrupted.json" 2>/dev/null &
+interrupt_pid=$!
+sleep 0.2
+kill -INT "$interrupt_pid"
+if wait "$interrupt_pid"; then fail "interrupted cross-review should exit non-zero"; fi
+python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert d["finished_at"].endswith("Z")' "$SBOX/interrupted.json" \
+  || fail "interrupted review should preserve structured evidence"
+
+make_stub mimo '{"sessionID":"M1","type":"text","part":{"id":"p1","text":"mimo ok"}}'
+make_stub grok '{"text":"grok ok","stopReason":"EndTurn","sessionId":"K1"}'
+
+if out="$(run --cross-review mimo,grok --cd "$SBOX/missing-repo" --format json --PROMPT review 2>/dev/null)"; then
+  fail "worker infrastructure errors should fail cross-review"
+fi
+python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["outcome"] == "failed"; assert len(d["reviewers"]) == 2; assert all(r["status"] == "failed" for r in d["reviewers"])' <<<"$out" \
+  || fail "worker infrastructure errors should preserve structured evidence: $out"
 
 if out="$(run --cross-review agy,antigravity --cd "$SBOX/repo" --format json --PROMPT review 2>/dev/null)"; then
   fail "duplicate/same-family reviewers should not form quorum"
@@ -226,6 +272,9 @@ grep -q -- '--cross-review' "$SKILL" || fail "cross-review quorum usage missing 
 grep -q 'recommended_timeout_seconds' "$SKILL" || fail "persistent provider timeout policy missing from skill"
 grep -q 'degraded' "$SKILL" || fail "provider health escalation policy missing from skill"
 grep -q 'routing_priority' "$SKILL" || fail "health-aware routing priority missing from skill"
+grep -q -- '--review-profile small-fix' "$SKILL" || fail "small-fix review profile missing from skill"
+grep -q '并行\|parallel' "$SKILL" || fail "parallel cross-review policy missing from skill"
+grep -q 'terminated' "$SKILL" || fail "terminated evidence contract missing from skill"
 for a in codex gemini mimo cursor grok opencode antigravity; do
   grep -q "$a" "$SKILL" || fail "$a missing from skill"
 done

@@ -247,9 +247,14 @@ python3 <plugin-root>/scripts/external_agent.py --agent codex \
 python3 <plugin-root>/scripts/external_agent.py --cross-review agy,mimo \
   --cd "$PWD" --context git --format json --PROMPT '只报告有证据的问题' \
   > docs/superpowers/.workflow-evidence/external-review.json
+
+# 已满足 small-fix 资格的窄修复：并行启动、默认 90 秒、首个成功意见后降级返回
+python3 <plugin-root>/scripts/external_agent.py --cross-review cursor,mimo \
+  --review-profile small-fix --cd "$PWD" --context git --format json \
+  --PROMPT '只报告有证据的问题'
 ```
 
-`--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`。`--list` 同时显示 family、`health_status`、`routing_priority` 和 `recommended_timeout_seconds`；首次超时标记为 `slow` 并提高建议值，当前存在失败 streak 就降为 `deprioritized`，连续两次失败升级为 `degraded`，恢复成功后保留 `slow` 历史。调度默认优先健康的 `grok` / `cursor` / `mimo` 组合，慢速 `antigravity` 放到后备位；用户明确指定时仍会调用并报告状态。省略 `--timeout` 时自动采用 provider 建议值，显式传值仍是本次硬上限。`--cross-review` 只读调用逗号分隔的多个 reviewer，输出 artifact hash、repository fingerprint、生成时间、逐 reviewer 结果、成功 family 和 quorum；完成门只接受 24 小时内且仍匹配当前仓库的报告。`--context git` 会发送当前 staged/unstaged diff；不要包含密钥、`.env`、完整敏感 payload 或无关私有文件。
+`--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`。`--list` 同时显示 family、`health_status`、`routing_priority` 和 `recommended_timeout_seconds`；首次超时标记为 `slow` 并提高建议值，当前存在失败 streak 就降为 `deprioritized`，连续两次失败升级为 `degraded`，恢复成功后保留 `slow` 历史。`--cross-review` 并行调用 reviewer：standard 仍要求双家族 quorum；`small-fix` 显式使用 90 秒默认预算，一个 reviewer 成功时保留 `quorum=false` 并输出 `outcome=degraded`。失败、取消和用户终止也输出带 reviewer status/耗时的机器可读证据。完成门只接受 24 小时内且仍匹配当前仓库的报告。`--context git` 会发送当前 staged/unstaged diff；不要包含密钥、`.env`、完整敏感 payload 或无关私有文件。
 
 ## 脚本路径
 
@@ -269,6 +274,8 @@ python3 <plugin-root>/scripts/external_agent.py --cross-review agy,mimo \
 业务、请求与保真证据的 `result:` 必须有且仅有一行，内容为 `result: PASS`；仅有非空结果、写入失败结果或同时写入冲突结果都不会通过完成门。请求证据另外记录 `method:`、`url:` 和三位 `status:`，状态码按被验证路径的预期填写，不限定为 2xx。
 
 L0–L3 在进入执行 phase 前还必须通过 `understand`：L0 提交架构边界/迁移/回滚证据，L1 提交需求验收/非目标，L2 提交影响面/测试边界，L3 提交稳定复现/根因。状态保存 scope 与 evidence SHA-256，手改 `status` 或替换证据不能绕过。Goal 模式只接管用户已创建的目标；objective 原文不落盘，相同目标续行复用有效理解度，目标变化会重置为 `pending`。
+
+同一 task/target 从 L3 重判 L1 时，新 requirements evidence 可用 `reuses:` 引用原 root-cause，controller 会校验 objective 与两个 evidence hash。符合“稳定复现、单目标、预计生产改动 ≤3 文件、无 API/schema/权限/迁移/跨端时序变化”的任务可显式设置 `execution.profile small-fix`：保留 root-cause、Red/Green 和真实业务验收，只省略重复 spec/plan、重复全量四连，并允许有效单 reviewer 以 degraded evidence 收尾。business verify 未完成仍不得称 done/ship，但不阻塞已通过目标测试的本地 checkpoint commit。
 
 Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和裁决者，记录 2–3 个方案、reviewer provenance、最终选择、假设和残余风险。只有 `boundary: safe`、`requires_user: false` 的 PASS artifact 能通过 `workflow-state.sh confirm`；删除数据、强制推送、发布/部署、付费、凭证/隐私和权限操作必须暂停。自治结果不得表述为用户已确认。
 
