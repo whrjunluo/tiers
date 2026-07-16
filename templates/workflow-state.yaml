@@ -10,6 +10,7 @@ context:
   delivery: ""
 execution:
   mode: single
+  profile: standard # standard | small-fix
   objective_sha256: ""
   continuation: 0
   base_revision: ""
@@ -20,6 +21,10 @@ understanding:
   evidence: ""
   evidence_sha256: ""
   scope_sha256: ""
+  objective_sha256: ""
+  reused_kind: ""
+  reused_evidence: ""
+  reused_evidence_sha256: ""
 confirmation:
   mode: ""
   status: pending

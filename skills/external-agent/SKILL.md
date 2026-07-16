@@ -24,6 +24,10 @@ python3 <plugin-root>/scripts/external_agent.py \
 python3 <plugin-root>/scripts/external_agent.py \
   --cross-review agy,mimo --cd "$PWD" --context git --format json \
   --PROMPT "review the same frozen artifact"
+
+python3 <plugin-root>/scripts/external_agent.py \
+  --cross-review cursor,mimo --review-profile small-fix \
+  --cd "$PWD" --context git --format json --PROMPT "review a narrow frozen fix"
 ```
 
 - `--mode review` (default): **read-only** posture — independent review / research, no writes.
@@ -32,9 +36,10 @@ python3 <plugin-root>/scripts/external_agent.py \
 - `--SESSION_ID` resumes a prior session (multi-turn); antigravity has no resume.
 - `--context git` prepends branch/status/diff to the prompt (for review of current changes).
 - `--list` reports installed candidates, provider family, persistent `health_status`, machine-readable `routing_priority`, and `recommended_timeout_seconds`.
-- `--cross-review a,b` freezes one prompt/context, computes its SHA-256 and repository fingerprint, calls every reviewer read-only, and returns a timestamped report with `runner: tiers.external-agent/v1`. It exits successfully only when at least two known agents from different families return non-empty successful reviews.
+- `--cross-review a,b` freezes one prompt/context, computes its SHA-256 and repository fingerprint, and calls every reviewer read-only **in parallel**. Standard profile exits successfully only when at least two known agents from different families return non-empty successful reviews.
+- `--review-profile small-fix` is explicit opt-in for a workflow-qualified narrow fix. It defaults to 90 seconds per reviewer and stops remaining reviewers after the first valid external success. A one-success report is `success=true`, `quorum=false`, `outcome=degraded`; it is not a full cross-provider quorum.
 - `--fingerprint --cd <repo>` prints the deterministic Git snapshot hash used by the completion gate; workflow state/evidence files are excluded.
-- `--timeout N` is an explicit per-agent hard limit. When omitted, the runner uses that provider's persisted recommendation, then falls back to 600 seconds.
+- `--timeout N` is an explicit per-agent hard limit. Standard profile uses the provider's persisted recommendation, then falls back to 600 seconds. Small-fix uses 90 seconds when timeout is omitted; health history cannot silently expand that bounded run.
 - `--model` only when the user named a model.
 
 ## Agent capability matrix (routing)
@@ -63,9 +68,11 @@ Classify the sub-task, then pick mode + agent:
 
 - **Gather info / research** → `--mode review`. Web/external facts → `grok`; large codebase/doc digest → `antigravity`. Read-only.
 - **Execute / implement** → `--mode delegate` (needs user OK). Repo edits → `cursor` or `codex`; pure algorithm → `codex`; own/free/self-hosted models → `opencode`; China-available execution → `mimo`. If a call returns refusal/empty output, adjust the invocation or switch execution path instead of repeating the same prompt. Read-write, scoped to `--cd`.
-- **Cross-review** → `--cross-review <a>,<b>`, using **≥2 external CLI agents of different families**. Prefer installed reviewers with `routing_priority=normal` (normally `grok`, `cursor`, or `mimo`); use `antigravity`/`agy` after healthy candidates when it is marked `slow` or `degraded`, unless the user explicitly names it. Use `codex` as one reviewer only when the main orchestrator is not Codex. Installed binaries are only candidates: failed auth, timeout, empty output, aliases of one agent, or one successful family produce `quorum=false`. Platform subagents are not a substitute. The main agent reconciles every result.
+- **Cross-review** → `--cross-review <a>,<b>`, using **≥2 external CLI agents of different families** in parallel. Prefer installed reviewers with `routing_priority=normal` (normally `grok`, `cursor`, or `mimo`); use `antigravity`/`agy` after healthy candidates when it is marked `slow` or `degraded`, unless the user explicitly names it. Use `codex` as one reviewer only when the main orchestrator is not Codex. Installed binaries are only candidates: failed auth, timeout, empty output, aliases of one agent, or one successful family produce `quorum=false`. `small-fix` may accept that one family only through its explicit degraded policy; platform subagents remain non-substitutes. The main agent reconciles every returned result.
 
 Before routing, run `--list` and only pick installed agents. Health persists globally under `$DEV_WORKFLOW_DATA/external-agent-health.json` (default `~/.dev-workflow/`): the first timeout marks the provider `slow` and doubles its recommendation; any current failure streak sets `routing_priority=deprioritized`; two consecutive failures mark it `degraded`. A later success clears the consecutive-failure streak but retains `slow` history. Prefer healthy candidates when equivalent, but never silently skip a named or required provider: report the marker and use its recommendation or an explicit timeout. If the user names an agent, use it; if they just say "external agent", ask which unless context makes it obvious.
+
+Every cross-review report records `review_profile`, `policy`, `outcome`, `created_at`, `finished_at`, total duration, and reviewer lifecycle status/duration. Normal failures use `outcome=failed`; SIGINT/SIGTERM uses `outcome=terminated` with `termination_reason=user_interrupt`. A cancelled, failed, or terminated reviewer is evidence, never a successful opinion. Waiting updates belong to the orchestrator and should only be emitted when one of these statuses changes; a user stop request terminates the runner rather than leaving it in the background.
 
 ## Orchestration
 

@@ -10,7 +10,8 @@ collaborating-with-* bridges and the shell external-agent.sh runner.
       [--context none|git] [--model M] [--list] [--require-permissions]
 
   python external_agent.py --cross-review agy,mimo --cd DIR --PROMPT "..." \
-      [--format text|json] [--context none|git]
+      [--format text|json] [--context none|git] \
+      [--review-profile standard|small-fix] [--timeout N]
 
 Agents: codex, gemini, mimo, cursor, grok, antigravity (alias: agy).
 
@@ -26,10 +27,12 @@ verification; this runner is only the hands. See SKILL.md for routing policy.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
 import queue
+import signal
 import shutil
 import subprocess
 import sys
@@ -200,6 +203,7 @@ ALIASES = {"agy": "antigravity", "cursor-agent": "cursor"}
 # ----------------------------------------------------------------------------- persistent provider health
 
 DEFAULT_TIMEOUT_SECONDS = 600
+SMALL_FIX_TIMEOUT_SECONDS = 90
 MAX_RECOMMENDED_TIMEOUT_SECONDS = 3600
 HEALTH_LOCK_TIMEOUT_SECONDS = 5.0
 HEALTH_LOCK_STALE_SECONDS = 30.0
@@ -276,9 +280,12 @@ def _health_entry(agent: str) -> dict:
     return _load_health().get("agents", {}).get(agent, {})
 
 
-def _effective_timeout(agent: str, explicit_timeout: Optional[int]) -> int:
+def _effective_timeout(agent: str, explicit_timeout: Optional[int],
+                       review_profile: str = "standard") -> int:
     if explicit_timeout is not None:
         return explicit_timeout
+    if review_profile == "small-fix":
+        return SMALL_FIX_TIMEOUT_SECONDS
     recommended = _health_entry(agent).get("recommended_timeout_seconds")
     if isinstance(recommended, int) and recommended > 0:
         return recommended
@@ -512,84 +519,237 @@ def emit_cross_review(args, report):
     sys.exit(0 if report["success"] else 1)
 
 
+def _terminate_process_group(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (AttributeError, ProcessLookupError, PermissionError):
+        proc.terminate()
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (AttributeError, ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.wait()
+
+
+def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
+                           input_text: str,
+                           stop_event: threading.Event) -> Tuple[str, int, str, str]:
+    """Capture a child runner while allowing a sibling success or user stop to cancel it."""
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+        start_new_session=True,
+    )
+    started = time.monotonic()
+    pending_input: Optional[str] = input_text
+    while True:
+        if stop_event.is_set():
+            _terminate_process_group(proc)
+            out, err = proc.communicate()
+            return "cancelled", proc.returncode or 1, out or "", err or ""
+        remaining = timeout - (time.monotonic() - started)
+        if remaining <= 0:
+            _terminate_process_group(proc)
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        try:
+            out, err = proc.communicate(input=pending_input, timeout=min(0.1, remaining))
+            return "completed", proc.returncode, out or "", err or ""
+        except subprocess.TimeoutExpired:
+            pending_input = None
+
+
+def _cross_review_one(args, prompt: str, name: str,
+                      stop_event: threading.Event) -> dict:
+    spec = AGENTS[name]
+    timeout = _effective_timeout(name, args.timeout, args.review_profile)
+    reviewer = {
+        "agent": name,
+        "family": spec["family"],
+        "success": False,
+        "status": "failed",
+        "timeout_seconds": timeout,
+    }
+    started = time.monotonic()
+    cmd = [
+        sys.executable, os.path.abspath(__file__),
+        "--agent", name,
+        "--cd", args.cd,
+        "--mode", "review",
+        "--format", "json",
+        "--context", "none",
+        "--timeout", str(timeout),
+    ]
+    if not args.skip_perm:
+        cmd.append("--require-permissions")
+    try:
+        capture_status, rc, out, err = _capture_interruptible(
+            cmd, args.cd, timeout + 5, prompt, stop_event)
+        if capture_status == "cancelled":
+            reviewer["status"] = "cancelled"
+            reviewer["error"] = "stopped after small-fix policy was satisfied"
+            return reviewer
+        data = json.loads(out) if out.strip() else {}
+    except subprocess.TimeoutExpired:
+        reviewer["status"] = "timeout"
+        reviewer["error"] = f"{name} timed out after {timeout}s"
+        _record_health(name, "timeout", timeout, timeout, reviewer["error"])
+    except json.JSONDecodeError:
+        reviewer["error"] = f"could not parse {name} result: {out[:400]}"
+    else:
+        message = data.get("agent_messages") or ""
+        success = rc == 0 and data.get("success") is True and bool(message.strip())
+        reviewer["success"] = success
+        reviewer["SESSION_ID"] = data.get("SESSION_ID")
+        if success:
+            reviewer["status"] = "success"
+            reviewer["agent_messages"] = message
+        else:
+            error = data.get("error") or err.strip() or f"{name} returned no valid review"
+            reviewer["status"] = "timeout" if "timed out after" in error else "failed"
+            reviewer["error"] = error
+    finally:
+        reviewer["duration_seconds"] = round(time.monotonic() - started, 3)
+    return reviewer
+
+
+def _finish_cross_review(report: dict, started: float) -> None:
+    report["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    report["duration_seconds"] = round(time.monotonic() - started, 3)
+
+
 def cross_review(args, prompt):
+    started = time.monotonic()
     artifact_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     repo_fingerprint = repository_fingerprint(args.cd) if args.context == "git" else None
+    small_fix = args.review_profile == "small-fix"
     report = {
         "runner": RUNNER_ID,
         "success": False,
         "quorum": False,
+        "outcome": "failed",
+        "review_profile": args.review_profile,
+        "policy": {
+            "minimum_successes": 1 if small_fix else 2,
+            "minimum_families": 1 if small_fix else 2,
+            "stop_after_policy": small_fix,
+        },
         "artifact_sha256": artifact_sha256,
         "repository_fingerprint": repo_fingerprint,
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "successful_families": [],
         "reviewers": [],
     }
-    if args.context == "git" and not repo_fingerprint:
-        report["error"] = "--context git requires a Git worktree for repository binding"
+
+    def fail(message: str) -> None:
+        report["error"] = message
+        _finish_cross_review(report, started)
         emit_cross_review(args, report)
+
+    if args.context == "git" and not repo_fingerprint:
+        fail("--context git requires a Git worktree for repository binding")
 
     requested = [part.strip() for part in args.cross_review.split(",") if part.strip()]
     normalized = [ALIASES.get(name, name) for name in requested]
     if len(normalized) < 2:
-        report["error"] = "cross-review requires at least two agents"
-        emit_cross_review(args, report)
+        fail("cross-review requires at least two agents")
     if len(set(normalized)) != len(normalized):
-        report["error"] = "cross-review agents must be distinct after alias normalization"
-        emit_cross_review(args, report)
+        fail("cross-review agents must be distinct after alias normalization")
 
     unknown = [name for name in normalized if name not in AGENTS]
     if unknown:
-        report["error"] = f"unknown cross-review agents: {', '.join(unknown)}"
-        emit_cross_review(args, report)
+        fail(f"unknown cross-review agents: {', '.join(unknown)}")
 
     selected_families = {AGENTS[name]["family"] for name in normalized}
     if len(selected_families) < 2:
-        report["error"] = "cross-review requires agents from at least two families"
-        emit_cross_review(args, report)
+        fail("cross-review requires agents from at least two families")
 
-    for name in normalized:
-        spec = AGENTS[name]
-        timeout = _effective_timeout(name, args.timeout)
-        reviewer = {"agent": name, "family": spec["family"], "success": False,
-                    "timeout_seconds": timeout}
-        cmd = [
-            sys.executable, os.path.abspath(__file__),
-            "--agent", name,
-            "--cd", args.cd,
-            "--mode", "review",
-            "--format", "json",
-            "--context", "none",
-            "--timeout", str(timeout),
-        ]
-        if not args.skip_perm:
-            cmd.append("--require-permissions")
-        try:
-            rc, out, err = _capture(cmd, args.cd, timeout + 5, input_text=prompt)
-            data = json.loads(out) if out.strip() else {}
-        except subprocess.TimeoutExpired:
-            reviewer["error"] = f"{name} timed out after {timeout}s"
-            _record_health(name, "timeout", timeout, timeout, reviewer["error"])
-        except json.JSONDecodeError:
-            reviewer["error"] = f"could not parse {name} result: {out[:400]}"
+    stop_event = threading.Event()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(normalized))
+    futures = {
+        executor.submit(_cross_review_one, args, prompt, name, stop_event): name
+        for name in normalized
+    }
+    results = {}
+    interrupted = False
+    previous_sigint = signal.getsignal(signal.SIGINT)
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def interrupt_review(_signum, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, interrupt_review)
+    signal.signal(signal.SIGTERM, interrupt_review)
+    try:
+        for future in concurrent.futures.as_completed(futures):
+            name = futures[future]
+            try:
+                reviewer = future.result()
+            except Exception as exc:
+                reviewer = {
+                    "agent": name, "family": AGENTS[name]["family"],
+                    "success": False, "status": "failed",
+                    "timeout_seconds": _effective_timeout(
+                        name, args.timeout, args.review_profile),
+                    "duration_seconds": 0.0, "error": str(exc),
+                }
+            results[reviewer["agent"]] = reviewer
+            if small_fix and reviewer["success"]:
+                stop_event.set()
+    except KeyboardInterrupt:
+        interrupted = True
+        stop_event.set()
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+        signal.signal(signal.SIGINT, previous_sigint)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+
+    for future, name in futures.items():
+        if name in results:
+            continue
+        if future.done() and not future.cancelled():
+            try:
+                results[name] = future.result()
+            except Exception as exc:  # Preserve evidence instead of hiding worker failures.
+                results[name] = {
+                    "agent": name, "family": AGENTS[name]["family"],
+                    "success": False, "status": "failed",
+                    "timeout_seconds": _effective_timeout(
+                        name, args.timeout, args.review_profile),
+                    "duration_seconds": 0.0, "error": str(exc),
+                }
         else:
-            message = data.get("agent_messages") or ""
-            success = rc == 0 and data.get("success") is True and bool(message.strip())
-            reviewer["success"] = success
-            reviewer["SESSION_ID"] = data.get("SESSION_ID")
-            if success:
-                reviewer["agent_messages"] = message
-            else:
-                reviewer["error"] = data.get("error") or err.strip() or f"{name} returned no valid review"
-        report["reviewers"].append(reviewer)
+            results[name] = {
+                "agent": name, "family": AGENTS[name]["family"],
+                "success": False, "status": "cancelled",
+                "timeout_seconds": _effective_timeout(
+                    name, args.timeout, args.review_profile),
+                "duration_seconds": 0.0,
+                "error": "review terminated before completion",
+            }
+    report["reviewers"] = [results[name] for name in normalized]
 
     successful = [reviewer for reviewer in report["reviewers"] if reviewer["success"]]
     families = sorted({reviewer["family"] for reviewer in successful})
     report["successful_families"] = families
     report["quorum"] = len(successful) >= 2 and len(families) >= 2
-    report["success"] = report["quorum"]
-    if not report["quorum"]:
+    if interrupted:
+        report["outcome"] = "terminated"
+        report["termination_reason"] = "user_interrupt"
+        report["error"] = "cross-review terminated by user"
+    elif report["quorum"]:
+        report["success"] = True
+        report["outcome"] = "quorum"
+    elif small_fix and successful:
+        report["success"] = True
+        report["outcome"] = "degraded"
+    else:
         report["error"] = "cross-review quorum not met: need two successful distinct families"
+    _finish_cross_review(report, started)
     emit_cross_review(args, report)
 
 
@@ -607,7 +767,10 @@ def main():
     ap.add_argument("--require-permissions", dest="skip_perm", action="store_false", default=True,
                     help="Do not auto-skip permission prompts (headless has no TTY; may hang).")
     ap.add_argument("--timeout", type=int, default=None,
-                    help="Per-agent timeout; defaults to persistent provider recommendation or 600s.")
+                    help="Per-agent timeout; standard uses provider recommendation/600s, small-fix uses 90s.")
+    ap.add_argument("--review-profile", choices=["standard", "small-fix"],
+                    default="standard",
+                    help="Cross-review policy; small-fix defaults to 90s and one-success degradation.")
     ap.add_argument("--list", action="store_true", help="List installed agents and exit.")
     ap.add_argument("--fingerprint", action="store_true",
                     help="Print the current reviewable Git snapshot SHA-256 and exit.")

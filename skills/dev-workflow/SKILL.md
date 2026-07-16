@@ -102,7 +102,7 @@ description: Use when a development task could change code, behavior, configurat
 - L4：默认跳过。
 
 provider 优先级：
-1. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，或 `external_agent.py --list` 显示 ≥2 个不同家族外部 CLI 候选，优先用 `external_agent.py --cross-review <a>,<b>` 做只读 review。调用前同时检查 `health_status`、`routing_priority` 与 `recommended_timeout_seconds`：优先 `routing_priority=normal` 的不同家族组合（通常 `grok` / `cursor` / `mimo`）；`antigravity` 标记为 `slow`/`degraded` 时降为后备，用户明确指定时仍按建议超时调用并报告状态。`external-ready` 只说明候选已安装；必须实际返回 ≥2 个不同家族的成功结果且 `quorum=true` 才算通过。高风险业务闭环任务必须先尝试此项；认证失败、空产出、部分失败或只剩同家族 provider 时只算二次意见，不算完整交叉评审。
+1. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，或 `external_agent.py --list` 显示 ≥2 个不同家族外部 CLI 候选，优先用 `external_agent.py --cross-review <a>,<b>` 做只读 review。调用前同时检查 `health_status`、`routing_priority` 与 `recommended_timeout_seconds`：优先 `routing_priority=normal` 的不同家族组合（通常 `grok` / `cursor` / `mimo`）；`antigravity` 标记为 `slow`/`degraded` 时降为后备，用户明确指定时仍按建议超时调用并报告状态。runner 会并行启动 reviewer；standard profile 必须实际返回 ≥2 个不同家族的成功结果且 `quorum=true` 才算通过。高风险业务闭环任务必须先尝试此项；认证失败、空产出、部分失败或只剩同家族 provider 时只算二次意见，不算完整交叉评审。符合「小修复快速通道」时，改用下面的显式 small-fix 降级契约。
 2. **平台子代理（platform-agents）**：仅当外部交叉评审不可用、用户明确要求平台子代理、或作为外部 review 之外的补充时使用。不同 reviewer 用不同审查角色，例如“回归风险 reviewer”和“安装/降级路径 reviewer”。平台子代理不能替代已触发的外部交叉评审。
 3. **平台多模型（multi-model）**：若平台允许指定模型，且用户明确允许多模型，给 reviewer 分配不同模型；不允许或不可用时，同模型不同 prompt 也可用。
 4. **内置对抗 checklist（built-in）**：没有任何 provider 时也必须可执行。检查：最可能的回归点、缺依赖/缺 MCP 降级路径、安装脚本是否静默改环境、README/skill/脚本承诺是否一致、测试是否覆盖失败路径。
@@ -121,6 +121,18 @@ python3 <plugin-root>/scripts/external_agent.py \
   --PROMPT "只读审查当前改动，只报告有证据的问题" \
   > docs/superpowers/.workflow-evidence/external-review.json
 ```
+
+small-fix 仍从两个不同 family 启动 reviewer，但默认每个 90 秒；第一个有效外部意见返回后即可取消仍在等待的 reviewer：
+
+```bash
+python3 <plugin-root>/scripts/external_agent.py \
+  --cross-review cursor,mimo --review-profile small-fix \
+  --cd "$PWD" --context git --format json \
+  --PROMPT "只读审查这个已冻结的窄修复，只报告有证据的问题" \
+  > docs/superpowers/.workflow-evidence/external-review.json
+```
+
+这时 `success=true` 只表示 small-fix policy 已满足；若只有一个成功 reviewer，报告必须保持 `quorum=false`、`outcome=degraded`，不能宣称完整双家族评审。失败/超时/取消/用户终止统一保存 `review_profile`、`policy`、`outcome`、起止时间、总耗时，以及每个 reviewer 的 `status`、耗时、timeout 与 error/result；用户终止必须是 `outcome=terminated`，永远不能通过完成门。
 
 ---
 
@@ -181,6 +193,35 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 
 L0–L3 必须把理解证据写入 `docs/superpowers/.workflow-evidence/`，再运行 `workflow-state.sh understand <仓库相对证据路径>`。证据按 tier 分别包含 architecture 的 `boundaries/migration/rollback`、requirements 的 `acceptance/non_goals`、impact 的 `affected/tests`、root-cause 的 `reproduction/root_cause`；共同要求有且仅有一个 `result: PASS`。通过后先显示：`理解度 = PASS｜类型 = root-cause｜依据 = 稳定复现 + 根因证据`。`tdd`、`review`、`business-verify`、`fidelity-verify` 与 `complete` 都会重新校验 scope/evidence hash，目标、范围、requirements 或证据变化后必须重新理解，不能只改 status。
 
+同一 task/target 发生 L3→L1 等重判时，不重写已通过的根因。新 evidence 仍补齐当前 level 的必需字段，并用 `reuses:` 指向上一份 evidence；controller 会校验稳定 objective、旧 kind 与两个文件 hash：
+
+```text
+result: PASS
+kind: requirements
+acceptance: 发送成功清空输入；发送失败保留内容并可重试
+non_goals: 不改变 IM 协议、API 或跨端时序
+reuses: docs/superpowers/.workflow-evidence/root-cause.txt
+```
+
+## 小修复快速通道（small-fix）
+
+这是显式 profile，不是新的风险等级。必须同时满足：已有行为的稳定 bug 复现；同一单端/单目标；预计生产改动 ≤3 文件；有目标 Red/Green；不新增 API/schema、权限、数据迁移、依赖或跨端时序。IM/auth/payment 等领域不自动排除，但只要改变契约、守卫、传输或跨端编排就不合格。实现后发现超出边界，立即切回 `standard`，不得继续使用降级 review。
+
+进入时设置：
+
+```bash
+<plugin-root>/scripts/workflow-state.sh set execution.profile small-fix
+```
+
+small-fix 只压缩重复流程，不压缩真实性：
+
+- L3→L1 复用 root-cause，只补新增 acceptance/non-goals；这份补充就是轻量 spec，豁免 L1 的完整 brainstorm/grill/spec/plan 文档链。
+- TDD 仍先红后绿。验证运行目标测试，再从 typecheck/lint/build 中选一个能覆盖本次风险的必要门；只有共享基础设施、配置或影响面扩大时才跑全量四连。
+- codegraph 对高风险业务最多跑一次；不可用时保持既有人工影响面降级。
+- 冻结 diff 后，business verification 与外部只读 review 可以并行，墙钟取两者最大值。
+- 用户明确关注速度时优先判断是否符合 small-fix，不先启动 standard 长评审。用户要求停止时立即终止 reviewer、保存 terminated evidence，并停止后续门禁。
+- 等待更新只在 reviewer 成功/失败/超时/取消等**状态变化**时输出；没有新信息不得每 30 秒刷屏。用户主动询问状态时可以简短响应一次。
+
 ---
 
 ## 设计保真验收关卡（各级通用，收尾 HARD-GATE）
@@ -217,6 +258,8 @@ L0–L3 必须把理解证据写入 `docs/superpowers/.workflow-evidence/`，再
 > 高风险业务闭环任务（auth、路由守卫、API 写入、订单、IM、处方、支付、权限）在完成前还必须跑 `codegraph-judge assess`；若 codegraph 不可用，只能记录“codegraph 降级为人工影响面审查”的证据，不能省略影响面审查。人工影响面审查至少要列：改动文件清单、每个文件影响、受影响业务 flow、测试缺口、为什么仍满足 L1/L2/L3 判级。
 >
 > 状态机（L1 及所有高风险业务 L2/L3 强制）：设置 `requirements.business=true` 与 `requirements.external_review=true`，收尾进入 `business-verify`；若同时有设计稿，再设置 `requirements.fidelity=true` 并进入 `fidelity-verify`。证据文件齐全后只能用 `workflow-state.sh complete` 完成，禁止直接 `set phase done`。
+
+`business-verify` 未完成只阻塞 `done`、merge、ship、deploy 和“业务已闭环”声明；代码已通过目标 TDD 与必要静态门后，可以创建本地 **checkpoint commit** 保存工作。commit 后状态仍停在 `business-verify`，final 必须明确未闭合证据，不能把“已提交”写成“已完成”。
 
 ---
 
@@ -272,6 +315,7 @@ L4 微调不跑（风险≈0，白跑）。
 **触发条件：** 新增模块、新增完整用户流程、跨多文件的全新设计。
 
 > ⛔ **HARD-GATE（L1 强制时序，优先级高于被插入 skill 自身的终态指令）**
+> 本段约束 `execution.profile=standard`。已经按「小修复快速通道」逐项证明资格、且仅因同目标 acceptance 扩展从 L3 重判 L1 的任务，按 fast-path 章节复用根因并使用轻量 requirements evidence，不重复完整 SDD 文档链。
 > `brainstorming` skill 的终态指令是「下一步 invoking writing-plans，不要调用其他 skill」——**这条对 L1 不成立，必须无视**。L1 在 brainstorming 之后、写/定稿 spec 之前，**必须先通过「理解度关卡」**，禁止从 brainstorm 直接跳到 spec/plan。
 > **关卡判定**：摆出决策树各分支已落到的结论、识别到的边界情况、仍未问清的开口，自评对需求的理解度（能否写出基本不返工的 spec）。
 > - **理解不足，或拿不准** → 进 `grilling` 追问，收敛到理解足够才退出。**未通过关卡禁止写 spec / 调 `writing-plans` / 建 specs 目录。**
@@ -403,6 +447,13 @@ context:
   sources: OpenAPI + acceptance criteria
   environment: real # real | mock | n/a
   delivery: local-only
+execution:
+  profile: standard # standard | small-fix
+understanding:       # controller-owned hashes; do not set manually
+  objective_sha256: ""
+  reused_kind: ""
+  reused_evidence: ""
+  reused_evidence_sha256: ""
 requirements:
   business: true
   fidelity: false
@@ -432,7 +483,7 @@ next: 下一步具体该做什么
    > L1 阶段流转：`brainstorm` →（理解度关卡）→ 理解不足则 `set phase grill`、收敛后再 `set phase spec`；自评足够且用户点头可直接 `set phase spec`。禁止 brainstorm 不经关卡判定直接跳 spec。
 3. **声明关卡**：业务闭环设置 `requirements.business=true`，脚本会强制同时满足 `requirements.external_review=true`；其他触发外部评审的任务也设置 `requirements.external_review=true`；设计保真设置 `requirements.fidelity=true`。
 4. **每过一个阶段**：`set phase/next`，有 spec/plan 则设置 artifacts；每项验收先按上述最低格式写进本地证据目录，再 `set evidence.<field> <path>`。
-5. **收尾**：普通任务停在 `review`，业务任务停在 `business-verify`，设计任务停在 `fidelity-verify`。运行 `<plugin-root>/scripts/workflow-state.sh complete`；脚本验证上下文、证据格式、真实业务环境，以及当前仓库 24 小时内的双家族 quorum 后，写入 repository fingerprint 与 `requirements_sha256` seal 再进入 `done`。sealed 状态不可修改，requirements 手工降级或 phase 解封会使 `check` 失败；后续仓库继续开发或自然超过 24 小时不会推翻历史完成。`set phase done` 永远拒绝。
+5. **收尾**：普通任务停在 `review`，业务任务停在 `business-verify`，设计任务停在 `fidelity-verify`。运行 `<plugin-root>/scripts/workflow-state.sh complete`；脚本验证上下文、证据格式、真实业务环境，以及当前仓库 24 小时内的 standard 双家族 quorum 或显式 small-fix 单成功 degraded evidence 后，写入 repository fingerprint 与 `requirements_sha256` seal 再进入 `done`。sealed 状态不可修改，requirements 手工降级或 phase 解封会使 `check` 失败；后续仓库继续开发或自然超过 24 小时不会推翻历史完成。`set phase done` 永远拒绝。
 
 **Goal 模式：** 只有用户已经设置 Goal 时才运行 `workflow-state.sh goal "<objective>"`；tiers 不得自行创建 Goal。自动续行使用 `continue-goal "<objective>"`，显示 `目标续行 = 第 N 次｜phase = tdd｜理解度 = 复用`。相同 objective 只增加 continuation 并保留 checkpoint；objective 发生变化时清空 checkpoint，并把 understanding 重置为 `pending`。状态只保存 objective SHA-256，不保存目标原文。单次续行结束、token 接近上限或代码写完都不等于 Goal 完成。
 

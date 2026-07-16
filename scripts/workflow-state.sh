@@ -17,10 +17,11 @@ VALID_PHASES="brainstorm grill spec plan tdd review business-verify fidelity-ver
 VALID_LEVELS="L0 L1 L2 L3 L4"
 VALID_BOOLEANS="true false"
 VALID_ENVIRONMENTS="real mock n/a"
+VALID_PROFILES="standard small-fix"
 VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
 VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
 VALID_CONFIRMATION_STATUSES="pending passed blocked"
-VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.checkpoint requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
+VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.checkpoint requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
 
 die(){ echo "✗ $1" >&2; exit 1; }
 in_list(){ printf '%s\n' $2 | grep -qxF "$1"; }
@@ -160,6 +161,11 @@ ensure_schema(){
   append_template_section requirements
   append_template_section evidence
   append_template_section completion
+  ensure_nested_field execution profile standard
+  ensure_nested_field understanding objective_sha256 '""'
+  ensure_nested_field understanding reused_kind '""'
+  ensure_nested_field understanding reused_evidence '""'
+  ensure_nested_field understanding reused_evidence_sha256 '""'
   if is_empty_value "$sealed_at"; then
     if is_empty_value "$workflow_version"; then
       ensure_nested_field completion workflow_version 2
@@ -170,6 +176,10 @@ ensure_schema(){
     ensure_nested_field completion workflow_version 1
   fi
   ensure_nested_field completion requirements_sha256 '""'
+  if [ "$(yget understanding.status)" = passed ] && is_empty_value "$(yget understanding.objective_sha256)" \
+    && [ "$(yget understanding.scope_sha256)" = "$(scope_sha256)" ]; then
+    write_field understanding.objective_sha256 "$(objective_sha256)"
+  fi
 }
 
 ensure_nested_field(){
@@ -254,6 +264,14 @@ scope_sha256(){
   } | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
+objective_sha256(){
+  {
+    for field in task context.repo context.branch context.target execution.base_revision; do
+      printf '%s\0%s\0' "$field" "$(yget "$field")"
+    done
+  } | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
 file_sha256(){
   python3 - "$1" <<'PY'
 import hashlib, sys
@@ -277,6 +295,16 @@ understanding_kind_for_level(){
   esac
 }
 
+understanding_level_for_kind(){
+  case "$1" in
+    architecture) printf '%s\n' L0 ;;
+    requirements) printf '%s\n' L1 ;;
+    impact) printf '%s\n' L2 ;;
+    root-cause) printf '%s\n' L3 ;;
+    *) return 1 ;;
+  esac
+}
+
 evidence_scalar(){
   local key="$1" path="$2"
   awk -v key="$key" '$1==key":"{sub(/^[^:]+:[[:space:]]*/,"");print;exit}' "$path"
@@ -289,6 +317,10 @@ reset_understanding(){
   write_field understanding.evidence ""
   write_field understanding.evidence_sha256 ""
   write_field understanding.scope_sha256 ""
+  write_field understanding.objective_sha256 ""
+  write_field understanding.reused_kind ""
+  write_field understanding.reused_evidence ""
+  write_field understanding.reused_evidence_sha256 ""
 }
 
 reset_confirmation(){
@@ -383,7 +415,7 @@ require_evidence_file(){
 }
 
 validate_external_review(){
-  local mode="${1:-current}" value path expected_fingerprint reference_time
+  local mode="${1:-current}" value path expected_fingerprint reference_time profile
   value="$(yget evidence.external_review)"
   if is_empty_value "$value"; then
     add_error "缺少 evidence.external_review"
@@ -411,7 +443,8 @@ validate_external_review(){
     expected_fingerprint="$(yget completion.repository_fingerprint)"
     reference_time="$(yget completion.completed_at)"
   fi
-  if ! python3 - "$path" "$expected_fingerprint" "$reference_time" <<'PY'
+  profile="$(yget execution.profile)"
+  if ! python3 - "$path" "$expected_fingerprint" "$reference_time" "$profile" <<'PY'
 from datetime import datetime, timezone
 import json
 import re
@@ -425,6 +458,7 @@ except (OSError, json.JSONDecodeError):
 
 current_fingerprint = sys.argv[2]
 reference_raw = sys.argv[3]
+profile = sys.argv[4]
 families = data.get("successful_families") or []
 reviewers = data.get("reviewers") or []
 known_families = {
@@ -451,19 +485,58 @@ successful = [
     and reviewer["timeout_seconds"] > 0
 ]
 computed_families = {reviewer["family"] for reviewer in successful}
-valid = (
+common = (
     data.get("runner") == "tiers.external-agent/v1"
-    and data.get("success") is True
-    and data.get("quorum") is True
     and re.fullmatch(r"[0-9a-f]{64}", artifact) is not None
     and repository == current_fingerprint
     and re.fullmatch(r"[0-9a-f]{64}", repository) is not None
     and -300 <= age <= 86400
     and set(families) == computed_families
+)
+strict = (
+    data.get("success") is True
+    and data.get("quorum") is True
     and len(set(families)) >= 2
     and len(successful) >= 2
     and len(computed_families) >= 2
 )
+policy = data.get("policy") or {}
+degraded_successful = [
+    reviewer for reviewer in successful
+    if reviewer.get("status") == "success"
+    and isinstance(reviewer.get("duration_seconds"), (int, float))
+    and reviewer["duration_seconds"] >= 0
+]
+reviewer_lifecycle_valid = len(reviewers) >= 2 and all(
+    reviewer.get("status") in {"success", "failed", "timeout", "cancelled"}
+    and known_families.get(reviewer.get("agent")) == reviewer.get("family")
+    and isinstance(reviewer.get("timeout_seconds"), int)
+    and reviewer["timeout_seconds"] > 0
+    and isinstance(reviewer.get("duration_seconds"), (int, float))
+    and reviewer["duration_seconds"] >= 0
+    and ((reviewer.get("status") == "success") == (reviewer.get("success") is True))
+    for reviewer in reviewers
+)
+degraded = (
+    profile == "small-fix"
+    and data.get("review_profile") == "small-fix"
+    and data.get("success") is True
+    and data.get("quorum") is False
+    and data.get("outcome") == "degraded"
+    and policy == {
+        "minimum_successes": 1,
+        "minimum_families": 1,
+        "stop_after_policy": True,
+    }
+    and reviewer_lifecycle_valid
+    and len(degraded_successful) >= 1
+    and len(computed_families) >= 1
+    and isinstance(data.get("duration_seconds"), (int, float))
+    and data["duration_seconds"] >= 0
+    and isinstance(data.get("finished_at"), str)
+    and data["finished_at"].endswith("Z")
+)
+valid = common and (strict or degraded)
 raise SystemExit(0 if valid else 1)
 PY
   then
@@ -479,7 +552,7 @@ is_execution_phase(){
 }
 
 validate_understanding_gate(){
-  local version level status kind expected_kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope
+  local version level status kind expected_kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope expected_objective current_objective reused_value reused_path reused_kind reused_level reused_sha declared_reuse
   version="$(yget completion.workflow_version)"
   [ "$version" != 1 ] || return 0
   level="$(yget level)"
@@ -513,6 +586,27 @@ validate_understanding_gate(){
   expected_scope="$(yget understanding.scope_sha256)"
   current_scope="$(scope_sha256)"
   [ "$expected_scope" = "$current_scope" ] || add_error "understanding scope 已变化，需重新评估"
+  expected_objective="$(yget understanding.objective_sha256)"
+  current_objective="$(objective_sha256)"
+  [ "$expected_objective" = "$current_objective" ] || add_error "understanding objective 已变化，需重新评估"
+
+  reused_value="$(yget understanding.reused_evidence)"
+  if ! is_empty_value "$reused_value"; then
+    if ! valid_evidence_reference "$reused_value" || ! reused_path="$(evidence_path "$reused_value")" || [ ! -s "$reused_path" ]; then
+      add_error "understanding.reused_evidence 引用非法或不存在: $reused_value"
+      return
+    fi
+    reused_sha="$(yget understanding.reused_evidence_sha256)"
+    [ "$reused_sha" = "$(file_sha256 "$reused_path")" ] || add_error "reused understanding evidence 内容已变化"
+    reused_kind="$(yget understanding.reused_kind)"
+    if reused_level="$(understanding_level_for_kind "$reused_kind")"; then
+      validate_understanding_evidence "$reused_level" "$reused_path"
+    else
+      add_error "understanding.reused_kind 非法: ${reused_kind:-空}"
+    fi
+    declared_reuse="$(evidence_scalar reuses "$path")"
+    [ "$declared_reuse" = "$reused_value" ] || add_error "当前 understanding evidence 未声明已封存的 reuses:"
+  fi
 }
 
 validate_confirmation_gate(){
@@ -717,11 +811,45 @@ case "${1:-}" in
         validate_understanding_evidence "$level" "$path"
       fi
     fi
+    reuse_value=""
+    [ -z "${path:-}" ] || reuse_value="$(evidence_scalar reuses "$path")"
+    if ! is_empty_value "$reuse_value"; then
+      previous_status="$(yget understanding.status)"
+      previous_kind="$(yget understanding.kind)"
+      previous_evidence="$(yget understanding.evidence)"
+      previous_evidence_sha="$(yget understanding.evidence_sha256)"
+      previous_objective="$(yget understanding.objective_sha256)"
+      expected_kind="$(understanding_kind_for_level "$level")"
+      [ "$previous_status" = passed ] || add_error "reuses 需要已有 passed understanding"
+      [ "$previous_kind" != "$expected_kind" ] || add_error "同 kind understanding 不需要 reuses"
+      [ "$reuse_value" = "$previous_evidence" ] || add_error "reuses 必须引用上一份 understanding evidence"
+      [ "$previous_objective" = "$(objective_sha256)" ] || add_error "reuses 仅允许同一 task/target objective"
+      if ! valid_evidence_reference "$reuse_value" || ! reuse_path="$(evidence_path "$reuse_value")" || [ ! -s "$reuse_path" ]; then
+        add_error "reuses 引用非法或不存在: $reuse_value"
+      else
+        [ "$previous_evidence_sha" = "$(file_sha256 "$reuse_path")" ] || add_error "reuses evidence 内容已变化"
+        if previous_level="$(understanding_level_for_kind "$previous_kind")"; then
+          validate_understanding_evidence "$previous_level" "$reuse_path"
+        else
+          add_error "旧 understanding kind 非法: ${previous_kind:-空}"
+        fi
+      fi
+    fi
     [ -z "$errors" ] || die "理解度关卡未通过: $errors"
+    if ! is_empty_value "$reuse_value"; then
+      write_field understanding.reused_kind "$previous_kind"
+      write_field understanding.reused_evidence "$reuse_value"
+      write_field understanding.reused_evidence_sha256 "$previous_evidence_sha"
+    else
+      write_field understanding.reused_kind ""
+      write_field understanding.reused_evidence ""
+      write_field understanding.reused_evidence_sha256 ""
+    fi
     write_field understanding.kind "$(understanding_kind_for_level "$level")"
     write_field understanding.evidence "$value"
     write_field understanding.evidence_sha256 "$(file_sha256 "$path")"
     write_field understanding.scope_sha256 "$(scope_sha256)"
+    write_field understanding.objective_sha256 "$(objective_sha256)"
     write_field understanding.status passed
     reset_confirmation pending
     echo "✓ 理解度 = PASS（kind=$(understanding_kind_for_level "$level")）" ;;
@@ -771,6 +899,7 @@ case "${1:-}" in
     case "$field" in
       requirements.*) in_list "$value" "$VALID_BOOLEANS" || die "$field 只能是 true/false" ;;
       context.environment) in_list "$value" "$VALID_ENVIRONMENTS" || die "$field 只能是 real/mock/n/a" ;;
+      execution.profile) in_list "$value" "$VALID_PROFILES" || die "$field 只能是 standard/small-fix" ;;
     esac
     write_field "$field" "$value"
     if [ "$field" = level ]; then
@@ -802,6 +931,7 @@ case "${1:-}" in
     lv="$(yget level)"; is_empty_value "$lv" || in_list "$lv" "$VALID_LEVELS" || die "level 非法: $lv"
     env="$(yget context.environment)"; is_empty_value "$env" || in_list "$env" "$VALID_ENVIRONMENTS" || die "context.environment 非法: $env"
     execution_mode="$(yget execution.mode)"; is_empty_value "$execution_mode" || in_list "$execution_mode" "single goal" || die "execution.mode 非法: $execution_mode"
+    execution_profile="$(yget execution.profile)"; is_empty_value "$execution_profile" || in_list "$execution_profile" "$VALID_PROFILES" || die "execution.profile 非法: $execution_profile"
     continuation="$(yget execution.continuation)"; printf '%s\n' "$continuation" | grep -qE '^[0-9]+$' || die "execution.continuation 非法: $continuation"
     for field in requirements.business requirements.fidelity requirements.external_review; do
       value="$(yget "$field")"
