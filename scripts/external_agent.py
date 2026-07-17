@@ -245,6 +245,43 @@ def _write_health(data: dict) -> None:
             pass
 
 
+def _health_lock_owner_path(path: str) -> str:
+    return os.path.join(path, "owner.pid")
+
+
+def _health_lock_owner_alive(path: str) -> Optional[bool]:
+    try:
+        with open(_health_lock_owner_path(path), encoding="utf-8") as handle:
+            pid = int(handle.read().strip())
+    except (FileNotFoundError, OSError, TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def _remove_health_lock(path: str) -> bool:
+    try:
+        os.unlink(_health_lock_owner_path(path))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    try:
+        os.rmdir(path)
+        return True
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def _acquire_health_lock() -> Optional[str]:
     path = f"{_health_path()}.lock"
     deadline = time.monotonic() + HEALTH_LOCK_TIMEOUT_SECONDS
@@ -256,12 +293,21 @@ def _acquire_health_lock() -> Optional[str]:
     while True:
         try:
             os.mkdir(path)
+            try:
+                with open(_health_lock_owner_path(path), "w", encoding="utf-8") as handle:
+                    handle.write(f"{os.getpid()}\n")
+            except OSError:
+                _remove_health_lock(path)
+                return None
             return path
         except FileExistsError:
             try:
+                if _health_lock_owner_alive(path) is False:
+                    if _remove_health_lock(path):
+                        continue
                 if time.time() - os.path.getmtime(path) > HEALTH_LOCK_STALE_SECONDS:
-                    os.rmdir(path)
-                    continue
+                    if _remove_health_lock(path):
+                        continue
             except (FileNotFoundError, OSError):
                 pass
             if time.monotonic() >= deadline:
@@ -272,10 +318,7 @@ def _acquire_health_lock() -> Optional[str]:
 
 
 def _release_health_lock(path: str) -> None:
-    try:
-        os.rmdir(path)
-    except OSError:
-        pass
+    _remove_health_lock(path)
 
 
 def _health_entry(agent: str) -> dict:
@@ -366,6 +409,63 @@ def _health_metadata(agent: str) -> dict:
         "consecutive_timeouts": entry.get("consecutive_timeouts", 0),
         "consecutive_failures": entry.get("consecutive_failures", 0),
     }
+
+
+HEALTH_ROUTE_RANK = {"healthy": 0, "unknown": 1, "slow": 2, "degraded": 3}
+PRIORITY_ROUTE_RANK = {"normal": 0, "deprioritized": 1}
+
+
+def _auto_review_candidates(review_profile: str,
+                            orchestrator_family: str = "") -> List[dict]:
+    candidates = []
+    for name, spec in AGENTS.items():
+        if orchestrator_family and spec["family"] == orchestrator_family:
+            continue
+        path = shutil.which(spec["bin"])
+        if not path:
+            continue
+        health = _health_metadata(name)
+        entry = _health_entry(name)
+        timeout, timeout_source = _effective_timeout_details(
+            name, None, review_profile)
+        duration = entry.get("last_duration_seconds")
+        if not isinstance(duration, (int, float)) or duration < 0:
+            duration = float("inf")
+        candidates.append({
+            "agent": name,
+            "family": spec["family"],
+            "path": path,
+            "health_status": health["health_status"],
+            "routing_priority": health["routing_priority"],
+            "timeout_seconds": timeout,
+            "timeout_source": timeout_source,
+            "last_duration_seconds": duration,
+        })
+    return sorted(
+        candidates,
+        key=lambda row: (
+            PRIORITY_ROUTE_RANK.get(row["routing_priority"], 99),
+            HEALTH_ROUTE_RANK.get(row["health_status"], 99),
+            row["timeout_seconds"],
+            row["last_duration_seconds"],
+            row["agent"],
+        ),
+    )
+
+
+def _select_auto_reviewers(review_profile: str,
+                           orchestrator_family: str = "") -> List[str]:
+    candidates = _auto_review_candidates(review_profile, orchestrator_family)
+    if not candidates:
+        raise ValueError("auto cross-review requires two installed reviewer families")
+    first = candidates[0]
+    second = next(
+        (candidate for candidate in candidates if candidate["family"] != first["family"]),
+        None,
+    )
+    if second is None:
+        raise ValueError("auto cross-review requires two installed reviewer families")
+    return [first["agent"], second["agent"]]
 
 
 # ----------------------------------------------------------------------------- parsers
@@ -700,6 +800,11 @@ def cross_review(args, prompt):
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "successful_families": [],
         "reviewers": [],
+        "selection": {
+            "mode": "auto" if args.cross_review.strip() == "auto" else "explicit",
+            "orchestrator_family": args.orchestrator_family or None,
+            "selected_reviewers": [],
+        },
     }
 
     def fail(message: str) -> None:
@@ -718,8 +823,16 @@ def cross_review(args, prompt):
     if args.context == "git" and not repo_fingerprint:
         fail("--context git requires a Git worktree for repository binding")
 
-    requested = [part.strip() for part in args.cross_review.split(",") if part.strip()]
-    normalized = [ALIASES.get(name, name) for name in requested]
+    if args.cross_review.strip() == "auto":
+        try:
+            normalized = _select_auto_reviewers(
+                args.review_profile, args.orchestrator_family)
+        except ValueError as exc:
+            fail(str(exc))
+    else:
+        requested = [part.strip() for part in args.cross_review.split(",") if part.strip()]
+        normalized = [ALIASES.get(name, name) for name in requested]
+    report["selection"]["selected_reviewers"] = normalized
     if len(normalized) < 2:
         fail("cross-review requires at least two agents")
     if len(set(normalized)) != len(normalized):
@@ -738,6 +851,7 @@ def cross_review(args, prompt):
         agents=normalized,
         families=sorted(selected_families),
         policy=report["policy"],
+        selection=report["selection"],
     )
 
     stop_event = threading.Event()
@@ -858,6 +972,12 @@ def main():
     ap = argparse.ArgumentParser(description="Unified external-agent runner")
     ap.add_argument("--agent", help="codex|gemini|mimo|cursor|grok|antigravity")
     ap.add_argument("--cross-review", default="", help="Comma-separated read-only reviewers.")
+    ap.add_argument(
+        "--orchestrator-family",
+        choices=sorted({spec["family"] for spec in AGENTS.values()}),
+        default="",
+        help="Exclude the main orchestrator family when --cross-review auto is used.",
+    )
     ap.add_argument("--cd", default=os.getcwd(), help="Workspace root.")
     ap.add_argument("--PROMPT", default="", help="Prompt (or pass on stdin).")
     ap.add_argument("--mode", choices=["review", "delegate"], default="review")

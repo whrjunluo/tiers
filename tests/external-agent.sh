@@ -223,6 +223,60 @@ out="$(run --list)"
 python3 -c 'import sys,json; row=next(r for r in json.load(sys.stdin) if r["agent"] == "grok"); assert row["routing_priority"] == "deprioritized"' <<<"$out" \
   || fail "a provider with a current failure streak should be deprioritized"
 
+# Auto selection is deterministic, excludes the orchestrator family, and
+# prefers healthy candidates from distinct families over degraded providers.
+HEALTH="$DEV_WORKFLOW_DATA/external-agent-health.json"
+python3 - "$HEALTH" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+agents = data.setdefault("agents", {})
+agents.update({
+    "mimo": {"status": "healthy", "recommended_timeout_seconds": 300, "last_duration_seconds": 20, "consecutive_failures": 0},
+    "antigravity": {"status": "healthy", "recommended_timeout_seconds": 300, "last_duration_seconds": 30, "consecutive_failures": 0},
+    "gemini": {"status": "degraded", "recommended_timeout_seconds": 300, "last_duration_seconds": 2, "consecutive_failures": 2},
+    "opencode": {"status": "slow", "recommended_timeout_seconds": 300, "last_duration_seconds": 3, "consecutive_failures": 0},
+    "cursor": {"status": "slow", "recommended_timeout_seconds": 300, "last_duration_seconds": 10, "consecutive_failures": 0},
+    "grok": {"status": "degraded", "recommended_timeout_seconds": 100, "last_duration_seconds": 5, "consecutive_failures": 2},
+})
+json.dump(data, open(path, "w", encoding="utf-8"))
+PY
+make_stub mimo '{"sessionID":"M-auto","type":"text","part":{"id":"p1","text":"mimo auto"}}'
+make_stub agy 'agy auto'
+auto_one="$(run --cross-review auto --orchestrator-family openai --review-profile small-fix --cd "$SBOX/repo" --format json --PROMPT auto)"
+auto_two="$(run --cross-review auto --orchestrator-family openai --review-profile small-fix --cd "$SBOX/repo" --format json --PROMPT auto)"
+python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=json.loads(sys.argv[2]); selected=a["selection"]["selected_reviewers"]; selected_two=b["selection"]["selected_reviewers"]; assert set(selected) == set(selected_two); assert a["selection"]["mode"] == "auto"; assert a["selection"]["orchestrator_family"] == "openai"; assert len(selected) == 2; assert all(r["family"] != "openai" for r in a["reviewers"]); assert len({r["family"] for r in a["reviewers"]}) == 2; assert "grok" not in selected; assert set(selected) == {"mimo", "antigravity"}, selected' "$auto_one" "$auto_two" \
+  || fail "auto reviewer selection should be stable and health-aware"
+
+ONE_FAMILY="$SBOX/one-family"
+mkdir -p "$ONE_FAMILY/bin" "$ONE_FAMILY/data"
+cp "$SBOX/bin/mimo" "$ONE_FAMILY/bin/mimo"
+if PATH="$ONE_FAMILY/bin:/usr/bin:/bin" DEV_WORKFLOW_DATA="$ONE_FAMILY/data" \
+  /usr/bin/python3 "$RUNNER" --cross-review auto --orchestrator-family openai \
+  --progress none --cd "$SBOX/repo" --format json --PROMPT one-family \
+  >"$ONE_FAMILY/final.json" 2>/dev/null; then
+  fail "auto selection should fail when two installed families are unavailable"
+fi
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["selection"]["mode"] == "auto"; assert "two installed reviewer families" in d["error"]' "$ONE_FAMILY/final.json" \
+  || fail "auto selection failure should preserve structured evidence"
+
+# A cancelled reviewer can die while holding the health lock. A lock whose
+# recorded owner PID is gone must be reclaimed immediately, not after the
+# five-second acquisition timeout.
+ORPHAN_DATA="$SBOX/orphan-health"
+ORPHAN_LOCK="$ORPHAN_DATA/external-agent-health.json.lock"
+mkdir -p "$ORPHAN_LOCK"
+printf '999999\n' > "$ORPHAN_LOCK/owner.pid"
+make_stub mimo '{"sessionID":"M-orphan","type":"text","part":{"id":"p1","text":"mimo orphan"}}'
+orphan_started="$SECONDS"
+PATH="$SBOX/bin:$PATH" DEV_WORKFLOW_DATA="$ORPHAN_DATA" \
+  python3 "$RUNNER" --progress none --agent mimo --cd "$SBOX/repo" --PROMPT orphan >/dev/null
+orphan_elapsed=$((SECONDS - orphan_started))
+[ "$orphan_elapsed" -lt 2 ] \
+  || fail "dead health-lock owner should be reclaimed immediately, elapsed=${orphan_elapsed}s"
+
 make_slow_stub agy 2 'agy late'
 if out="$(run --cross-review agy,mimo --timeout 1 --cd "$SBOX/repo" --format json --PROMPT review 2>/dev/null)"; then
   fail "timed-out provider should not form quorum"
