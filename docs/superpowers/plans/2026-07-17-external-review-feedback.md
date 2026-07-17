@@ -28,7 +28,7 @@
 - Produces: `ProgressEmitter.emit(event: str, **fields)` writing one JSON object per line to stderr.
 - Produces: CLI `--progress jsonl|none`, defaulting to `jsonl` for cross-review.
 
-- [ ] **Step 1: Write failing black-box tests**
+- [x] **Step 1: Write failing black-box tests**
 
 Add a helper that waits until a file contains an event rather than sleeping a fixed duration:
 
@@ -45,13 +45,13 @@ wait_for_event() {
 
 Start a slow cross-review in the background, redirect stderr to `progress.jsonl`, assert `cross_review_started` and both `review_started` events appear while the PID is still alive, then wait for final JSON and validate it. Update the SIGINT test to wait for `cross_review_started` before `kill -INT`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `bash tests/external-agent.sh`
 
 Expected: FAIL because `--progress` and lifecycle JSONL events do not exist.
 
-- [ ] **Step 3: Implement the minimal emitter**
+- [x] **Step 3: Implement the minimal emitter**
 
 Add:
 
@@ -65,13 +65,13 @@ class ProgressEmitter:
 
 Use a `threading.Lock`, monotonic sequence number, UTC timestamp, `json.dumps`, newline, and stderr flush. Emit start/finish events from the worker and aggregate paths. Keep final JSON on stdout only.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `bash tests/external-agent.sh`
 
 Expected: PASS, including the former SIGINT race.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/external_agent.py tests/external-agent.sh
@@ -88,17 +88,17 @@ git commit -m "feat(review): stream cross-review lifecycle events"
 - Produces: `STANDARD_TIMEOUT_CAP_SECONDS = 600`.
 - Produces: `_effective_timeout_details(agent, explicit_timeout, review_profile) -> (seconds, source)`.
 
-- [ ] **Step 1: Write failing timeout tests**
+- [x] **Step 1: Write failing timeout tests**
 
 Seed an agent health entry with `recommended_timeout_seconds: 2400`. Run standard cross-review and assert both the final reviewer evidence and `review_started` event use `timeout_seconds: 600` and `timeout_source: provider_capped`. Add an explicit `--timeout 700` assertion showing `timeout_source: explicit` and 700 seconds.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `bash tests/external-agent.sh`
 
 Expected: FAIL because standard currently inherits 2400 seconds and has no timeout source.
 
-- [ ] **Step 3: Implement bounded timeout resolution**
+- [x] **Step 3: Implement bounded timeout resolution**
 
 Resolve in this order:
 
@@ -114,13 +114,13 @@ return 600, "default"
 
 Keep `_effective_timeout()` as a compatibility wrapper if useful. Include `timeout_source` in reviewer evidence and start events.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `bash tests/external-agent.sh`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/external_agent.py tests/external-agent.sh
@@ -138,7 +138,7 @@ git commit -m "fix(review): cap implicit provider wait budgets"
 - Produces: CLI `--cross-review auto` and `--orchestrator-family`.
 - Produces: final `selection` object containing mode, orchestrator family, and selected reviewers.
 
-- [ ] **Step 1: Write failing selection tests**
+- [x] **Step 1: Write failing selection tests**
 
 Create health data where Grok is degraded, Cursor is slow, Mimo is healthy, and Antigravity is healthy. Run:
 
@@ -149,23 +149,23 @@ run --cross-review auto --orchestrator-family openai \
 
 Assert the selected agents are installed, exclude family `openai`, use two distinct families, prefer healthy candidates over degraded Grok, and remain stable across two invocations. Add a failure fixture with only one installed family and assert structured failed evidence.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `bash tests/external-agent.sh`
 
 Expected: FAIL because `auto` is treated as an unknown agent.
 
-- [ ] **Step 3: Implement deterministic selection**
+- [x] **Step 3: Implement deterministic selection**
 
 Build candidate metadata from `AGENTS`, `shutil.which`, `_health_metadata`, bounded timeout details, and optional family exclusion. Sort by routing priority, health rank, timeout, last duration, and name. Select the best candidate, then the best candidate with a different family. Explicit comma-separated lists retain current validation.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `bash tests/external-agent.sh`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/external_agent.py tests/external-agent.sh
@@ -184,17 +184,17 @@ git commit -m "feat(review): add health-aware automatic routing"
 **Interfaces:**
 - Documents the progress stream, bounded implicit budgets, and Codex auto-routing example.
 
-- [ ] **Step 1: Add failing documentation assertions**
+- [x] **Step 1: Add failing documentation assertions**
 
 Assert the external-agent skill mentions `--progress jsonl`, `--cross-review auto`, `--orchestrator-family openai`, lifecycle event names, and the 600-second implicit standard cap.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `bash tests/external-agent.sh`
 
 Expected: FAIL on the new documentation assertions.
 
-- [ ] **Step 3: Update documentation**
+- [x] **Step 3: Update documentation**
 
 Document a Codex example:
 
@@ -207,7 +207,7 @@ python3 <plugin-root>/scripts/external_agent.py \
 
 Clarify that stderr progress is user feedback, stdout final JSON is evidence, standard implicit waits are capped at 600 seconds, and explicit timeout can exceed the cap.
 
-- [ ] **Step 4: Run focused and full verification**
+- [x] **Step 4: Run focused and full verification**
 
 Run:
 
@@ -222,7 +222,7 @@ git diff --check
 
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add README.md skills/dev-workflow/SKILL.md skills/external-agent/SKILL.md tests/external-agent.sh

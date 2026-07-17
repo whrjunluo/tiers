@@ -419,6 +419,11 @@ def _auto_review_candidates(review_profile: str,
                             orchestrator_family: str = "") -> List[dict]:
     candidates = []
     for name, spec in AGENTS.items():
+        if spec["family"] == "configurable":
+            # Auto routing cannot prove which provider an OpenCode installation
+            # uses, so it must not count that nominal label as an independent
+            # review family. Explicit routing remains available to the operator.
+            continue
         if orchestrator_family and spec["family"] == orchestrator_family:
             continue
         path = shutil.which(spec["bin"])
@@ -654,6 +659,32 @@ class ProgressEmitter:
             sys.stderr.flush()
 
 
+class ReviewCancellation:
+    """One cancellation signal with a stable machine-readable reason."""
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._reason = ""
+        self._lock = threading.Lock()
+
+    def cancel(self, reason: str) -> None:
+        with self._lock:
+            if not self._reason:
+                self._reason = reason
+            self._event.set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def error_message(self) -> str:
+        with self._lock:
+            if self._reason == "small_fix_policy_satisfied":
+                return "stopped after small-fix policy was satisfied"
+            if self._reason == "user_interrupt":
+                return "review terminated by user"
+            return "review terminated before completion"
+
+
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     if proc.poll() is not None:
         return
@@ -673,7 +704,7 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
 
 def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
                            input_text: str,
-                           stop_event: threading.Event) -> Tuple[str, int, str, str]:
+                           cancellation: ReviewCancellation) -> Tuple[str, int, str, str]:
     """Capture a child runner while allowing a sibling success or user stop to cancel it."""
     proc = subprocess.Popen(
         cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -683,7 +714,7 @@ def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
     started = time.monotonic()
     pending_input: Optional[str] = input_text
     while True:
-        if stop_event.is_set():
+        if cancellation.is_set():
             _terminate_process_group(proc)
             out, err = proc.communicate()
             return "cancelled", proc.returncode or 1, out or "", err or ""
@@ -699,7 +730,7 @@ def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
 
 
 def _cross_review_one(args, prompt: str, name: str,
-                      stop_event: threading.Event,
+                      cancellation: ReviewCancellation,
                       progress: ProgressEmitter) -> dict:
     spec = AGENTS[name]
     timeout, timeout_source = _effective_timeout_details(
@@ -733,10 +764,10 @@ def _cross_review_one(args, prompt: str, name: str,
         cmd.append("--require-permissions")
     try:
         capture_status, rc, out, err = _capture_interruptible(
-            cmd, args.cd, timeout + 5, prompt, stop_event)
+            cmd, args.cd, timeout + 5, prompt, cancellation)
         if capture_status == "cancelled":
             reviewer["status"] = "cancelled"
-            reviewer["error"] = "stopped after small-fix policy was satisfied"
+            reviewer["error"] = cancellation.error_message()
             return reviewer
         data = json.loads(out) if out.strip() else {}
     except subprocess.TimeoutExpired:
@@ -846,32 +877,37 @@ def cross_review(args, prompt):
     if len(selected_families) < 2:
         fail("cross-review requires agents from at least two families")
 
-    progress.emit(
-        "cross_review_started",
-        agents=normalized,
-        families=sorted(selected_families),
-        policy=report["policy"],
-        selection=report["selection"],
-    )
-
-    stop_event = threading.Event()
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(normalized))
-    futures = {
-        executor.submit(_cross_review_one, args, prompt, name, stop_event, progress): name
-        for name in normalized
-    }
+    cancellation = ReviewCancellation()
+    executor = None
+    futures = {}
     results = {}
     interrupted = False
     policy_event_emitted = False
     previous_sigint = signal.getsignal(signal.SIGINT)
     previous_sigterm = signal.getsignal(signal.SIGTERM)
+    sigint_installed = False
+    sigterm_installed = False
 
     def interrupt_review(_signum, _frame):
         raise KeyboardInterrupt
 
-    signal.signal(signal.SIGINT, interrupt_review)
-    signal.signal(signal.SIGTERM, interrupt_review)
     try:
+        signal.signal(signal.SIGINT, interrupt_review)
+        sigint_installed = True
+        signal.signal(signal.SIGTERM, interrupt_review)
+        sigterm_installed = True
+        progress.emit(
+            "cross_review_started",
+            agents=normalized,
+            families=sorted(selected_families),
+            policy=report["policy"],
+            selection=report["selection"],
+        )
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(normalized))
+        for name in normalized:
+            future = executor.submit(
+                _cross_review_one, args, prompt, name, cancellation, progress)
+            futures[future] = name
         for future in concurrent.futures.as_completed(futures):
             name = futures[future]
             try:
@@ -902,15 +938,18 @@ def cross_review(args, prompt):
                     quorum=not small_fix,
                 )
             if small_fix and reviewer["success"]:
-                stop_event.set()
+                cancellation.cancel("small_fix_policy_satisfied")
     except KeyboardInterrupt:
         interrupted = True
-        stop_event.set()
+        cancellation.cancel("user_interrupt")
         progress.emit("cross_review_terminated", reason="user_interrupt")
     finally:
-        executor.shutdown(wait=True, cancel_futures=True)
-        signal.signal(signal.SIGINT, previous_sigint)
-        signal.signal(signal.SIGTERM, previous_sigterm)
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        if sigint_installed:
+            signal.signal(signal.SIGINT, previous_sigint)
+        if sigterm_installed:
+            signal.signal(signal.SIGTERM, previous_sigterm)
 
     for future, name in futures.items():
         if name in results:
@@ -937,8 +976,21 @@ def cross_review(args, prompt):
                 "timeout_seconds": timeout,
                 "timeout_source": timeout_source,
                 "duration_seconds": 0.0,
-                "error": "review terminated before completion",
+                "error": cancellation.error_message(),
             }
+    for name in normalized:
+        if name in results:
+            continue
+        timeout, timeout_source = _effective_timeout_details(
+            name, args.timeout, args.review_profile)
+        results[name] = {
+            "agent": name, "family": AGENTS[name]["family"],
+            "success": False, "status": "cancelled",
+            "timeout_seconds": timeout,
+            "timeout_source": timeout_source,
+            "duration_seconds": 0.0,
+            "error": cancellation.error_message(),
+        }
     report["reviewers"] = [results[name] for name in normalized]
 
     successful = [reviewer for reviewer in report["reviewers"] if reviewer["success"]]

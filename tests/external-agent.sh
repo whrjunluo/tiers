@@ -50,6 +50,7 @@ wait_for_event() { # file event [minimum-count]
   local count
   for _ in $(seq 1 100); do
     count="$(grep -c '\"event\": \"'"$event"'\"' "$file" 2>/dev/null || true)"
+    count="${count:-0}"
     [ "$count" -ge "$minimum" ] && return 0
     sleep 0.02
   done
@@ -168,6 +169,51 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"]
   || fail "progress output corrupted final JSON"
 python3 -c 'import json,sys; rows=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; assert rows; assert [r["sequence"] for r in rows] == list(range(1, len(rows)+1)); assert rows[0]["event"] == "cross_review_started"; assert rows[-1]["event"] == "cross_review_finished"' "$SBOX/progress-events.jsonl" \
   || fail "progress lifecycle contract failed"
+python3 - "$RUNNER" <<'PY' || fail "signal cleanup must protect the observable start event"
+import importlib.util
+import inspect
+import sys
+
+spec = importlib.util.spec_from_file_location("external_agent", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+source = inspect.getsource(module.cross_review)
+start_event = source.index('"cross_review_started"')
+handler = source.index("signal.signal(signal.SIGINT")
+guard = source.rfind("try:", 0, start_event)
+assert guard < handler < start_event, (guard, handler, start_event)
+PY
+if PATH="$SBOX/bin:$PATH" python3 - "$RUNNER" "$SBOX/repo" >"$SBOX/setup-interrupt.json" <<'PY'
+import importlib.util
+import sys
+from types import SimpleNamespace
+
+spec = importlib.util.spec_from_file_location("external_agent", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+original_emit = module.ProgressEmitter.emit
+fired = False
+
+def interrupt_on_start(self, event, **fields):
+    global fired
+    if event == "cross_review_started" and not fired:
+        fired = True
+        raise KeyboardInterrupt
+    return original_emit(self, event, **fields)
+
+module.ProgressEmitter.emit = interrupt_on_start
+args = SimpleNamespace(
+    cd=sys.argv[2], context="none", review_profile="standard", progress="none",
+    cross_review="mimo,grok", orchestrator_family="", timeout=None,
+    skip_perm=True, format="json",
+)
+module.cross_review(args, "interrupt during protected setup")
+PY
+then
+  fail "setup interrupt should exit non-zero"
+fi
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert len(d["reviewers"]) == 2; assert all(r["status"] == "cancelled" and r["error"] == "review terminated by user" for r in d["reviewers"])' "$SBOX/setup-interrupt.json" \
+  || fail "setup interrupt should preserve structured reviewer evidence"
 
 # Small-fix review uses a 90-second implicit budget and stops after the first
 # valid external opinion, preserving strict quorum=false in degraded evidence.
@@ -178,7 +224,7 @@ out="$(run --cross-review mimo,grok --review-profile small-fix --cd "$SBOX/repo"
 small_elapsed="$(python3 -c 'import sys,time; print(time.monotonic()-float(sys.argv[1]))' "$small_started")"
 python3 -c 'import sys; assert float(sys.argv[1]) < 1.5, sys.argv[1]' "$small_elapsed" \
   || fail "small-fix should stop after first success, elapsed=${small_elapsed}s"
-python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and not d["quorum"]; assert d["outcome"] == "degraded"; assert d["review_profile"] == "small-fix"; assert d["policy"] == {"minimum_successes": 1, "minimum_families": 1, "stop_after_policy": True}; assert all(r["timeout_seconds"] == 90 for r in d["reviewers"]); assert any(r["status"] == "cancelled" for r in d["reviewers"])' <<<"$out" \
+python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and not d["quorum"]; assert d["outcome"] == "degraded"; assert d["review_profile"] == "small-fix"; assert d["policy"] == {"minimum_successes": 1, "minimum_families": 1, "stop_after_policy": True}; assert all(r["timeout_seconds"] == 90 for r in d["reviewers"]); cancelled=[r for r in d["reviewers"] if r["status"] == "cancelled"]; assert cancelled and all(r["error"] == "stopped after small-fix policy was satisfied" for r in cancelled)' <<<"$out" \
   || fail "small-fix degraded evidence contract failed: $out"
 
 # SIGINT must leave machine-readable termination evidence instead of an empty
@@ -193,7 +239,7 @@ wait_for_event "$SBOX/interrupted-events.jsonl" cross_review_started \
   || fail "interrupt test never observed cross-review start"
 kill -INT "$interrupt_pid"
 if wait "$interrupt_pid"; then fail "interrupted cross-review should exit non-zero"; fi
-python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert d["finished_at"].endswith("Z")' "$SBOX/interrupted.json" \
+python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert d["finished_at"].endswith("Z"); cancelled=[r for r in d["reviewers"] if r["status"] == "cancelled"]; assert cancelled and all(r["error"] == "review terminated by user" for r in cancelled)' "$SBOX/interrupted.json" \
   || fail "interrupted review should preserve structured evidence"
 wait_for_event "$SBOX/interrupted-events.jsonl" cross_review_terminated \
   || fail "interrupted review should emit termination progress"
@@ -261,6 +307,20 @@ if PATH="$ONE_FAMILY/bin:/usr/bin:/bin" DEV_WORKFLOW_DATA="$ONE_FAMILY/data" \
 fi
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["selection"]["mode"] == "auto"; assert "two installed reviewer families" in d["error"]' "$ONE_FAMILY/final.json" \
   || fail "auto selection failure should preserve structured evidence"
+
+UNKNOWN_FAMILY="$SBOX/unknown-family"
+mkdir -p "$UNKNOWN_FAMILY/bin" "$UNKNOWN_FAMILY/data"
+cp "$SBOX/bin/mimo" "$UNKNOWN_FAMILY/bin/mimo"
+make_stub opencode '{"type":"text","part":{"text":"opencode unknown provider"}}'
+cp "$SBOX/bin/opencode" "$UNKNOWN_FAMILY/bin/opencode"
+if PATH="$UNKNOWN_FAMILY/bin:/usr/bin:/bin" DEV_WORKFLOW_DATA="$UNKNOWN_FAMILY/data" \
+  /usr/bin/python3 "$RUNNER" --cross-review auto --orchestrator-family openai \
+  --progress none --cd "$SBOX/repo" --format json --PROMPT unknown-family \
+  >"$UNKNOWN_FAMILY/final.json" 2>/dev/null; then
+  fail "auto selection should not treat an unknown opencode provider as an independent family"
+fi
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert "two installed reviewer families" in d["error"]; assert "opencode" not in d["selection"]["selected_reviewers"]' "$UNKNOWN_FAMILY/final.json" \
+  || fail "auto selection should exclude configurable-family reviewers without provider evidence"
 
 # A cancelled reviewer can die while holding the health lock. A lock whose
 # recorded owner PID is gone must be reclaimed immediately, not after the
