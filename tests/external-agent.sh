@@ -43,8 +43,19 @@ make_stub grok         '{"text":"grok ok","stopReason":"EndTurn","sessionId":"K1
 make_stub opencode     '{"sessionID":"O1","type":"text","part":{"id":"p1","text":"opencode ok"}}'
 make_stub agy          'agy ok'
 
-run() { PATH="$SBOX/bin:$PATH" python3 "$RUNNER" "$@"; }
+run() { PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --progress none "$@"; }
 field() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$2',''))" <<<"$1"; }
+wait_for_event() { # file event [minimum-count]
+  local file="$1" event="$2" minimum="${3:-1}"
+  local count
+  for _ in $(seq 1 100); do
+    count="$(grep -c '\"event\": \"'"$event"'\"' "$file" 2>/dev/null || true)"
+    count="${count:-0}"
+    [ "$count" -ge "$minimum" ] && return 0
+    sleep 0.02
+  done
+  return 1
+}
 
 # --- each agent: json contract parsed correctly -----------------------------
 for pair in "codex|codex ok|T1" "gemini|gemini ok|G1" "mimo|mimo ok|M1" \
@@ -139,6 +150,71 @@ parallel_elapsed="$(python3 -c 'import sys,time; print(time.monotonic()-float(sy
 python3 -c 'import sys; assert float(sys.argv[1]) < 1.8, sys.argv[1]' "$parallel_elapsed" \
   || fail "cross-review should run in parallel, elapsed=${parallel_elapsed}s"
 
+# Lifecycle progress must be observable before slow reviewers finish, while
+# final JSON remains isolated on stdout for evidence consumers.
+make_slow_stub mimo 2 '{"sessionID":"M-progress","type":"text","part":{"id":"p1","text":"mimo progress"}}'
+make_slow_stub grok 2 '{"text":"grok progress","stopReason":"EndTurn","sessionId":"K-progress"}'
+PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --cross-review mimo,grok \
+  --progress jsonl --cd "$SBOX/repo" --format json --PROMPT progress \
+  >"$SBOX/progress-final.json" 2>"$SBOX/progress-events.jsonl" &
+progress_pid=$!
+wait_for_event "$SBOX/progress-events.jsonl" cross_review_started \
+  || fail "cross-review start event was not observable"
+wait_for_event "$SBOX/progress-events.jsonl" review_started 2 \
+  || fail "reviewer start events were not observable"
+kill -0 "$progress_pid" 2>/dev/null \
+  || fail "slow cross-review finished before lifecycle events were observed"
+wait "$progress_pid" || fail "progress-enabled cross-review should succeed"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"] and d["quorum"]' "$SBOX/progress-final.json" \
+  || fail "progress output corrupted final JSON"
+python3 -c 'import json,sys; rows=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; assert rows; assert [r["sequence"] for r in rows] == list(range(1, len(rows)+1)); assert rows[0]["event"] == "cross_review_started"; assert rows[-1]["event"] == "cross_review_finished"' "$SBOX/progress-events.jsonl" \
+  || fail "progress lifecycle contract failed"
+python3 - "$RUNNER" <<'PY' || fail "signal cleanup must protect the observable start event"
+import importlib.util
+import inspect
+import sys
+
+spec = importlib.util.spec_from_file_location("external_agent", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+source = inspect.getsource(module.cross_review)
+start_event = source.index('"cross_review_started"')
+handler = source.index("signal.signal(signal.SIGINT")
+guard = source.rfind("try:", 0, start_event)
+assert guard < handler < start_event, (guard, handler, start_event)
+PY
+if PATH="$SBOX/bin:$PATH" python3 - "$RUNNER" "$SBOX/repo" >"$SBOX/setup-interrupt.json" <<'PY'
+import importlib.util
+import sys
+from types import SimpleNamespace
+
+spec = importlib.util.spec_from_file_location("external_agent", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+original_emit = module.ProgressEmitter.emit
+fired = False
+
+def interrupt_on_start(self, event, **fields):
+    global fired
+    if event == "cross_review_started" and not fired:
+        fired = True
+        raise KeyboardInterrupt
+    return original_emit(self, event, **fields)
+
+module.ProgressEmitter.emit = interrupt_on_start
+args = SimpleNamespace(
+    cd=sys.argv[2], context="none", review_profile="standard", progress="none",
+    cross_review="mimo,grok", orchestrator_family="", timeout=None,
+    skip_perm=True, format="json",
+)
+module.cross_review(args, "interrupt during protected setup")
+PY
+then
+  fail "setup interrupt should exit non-zero"
+fi
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert len(d["reviewers"]) == 2; assert all(r["status"] == "cancelled" and r["error"] == "review terminated by user" for r in d["reviewers"])' "$SBOX/setup-interrupt.json" \
+  || fail "setup interrupt should preserve structured reviewer evidence"
+
 # Small-fix review uses a 90-second implicit budget and stops after the first
 # valid external opinion, preserving strict quorum=false in degraded evidence.
 make_stub mimo '{"sessionID":"M3","type":"text","part":{"id":"p1","text":"mimo first"}}'
@@ -148,7 +224,7 @@ out="$(run --cross-review mimo,grok --review-profile small-fix --cd "$SBOX/repo"
 small_elapsed="$(python3 -c 'import sys,time; print(time.monotonic()-float(sys.argv[1]))' "$small_started")"
 python3 -c 'import sys; assert float(sys.argv[1]) < 1.5, sys.argv[1]' "$small_elapsed" \
   || fail "small-fix should stop after first success, elapsed=${small_elapsed}s"
-python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and not d["quorum"]; assert d["outcome"] == "degraded"; assert d["review_profile"] == "small-fix"; assert d["policy"] == {"minimum_successes": 1, "minimum_families": 1, "stop_after_policy": True}; assert all(r["timeout_seconds"] == 90 for r in d["reviewers"]); assert any(r["status"] == "cancelled" for r in d["reviewers"])' <<<"$out" \
+python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and not d["quorum"]; assert d["outcome"] == "degraded"; assert d["review_profile"] == "small-fix"; assert d["policy"] == {"minimum_successes": 1, "minimum_families": 1, "stop_after_policy": True}; assert all(r["timeout_seconds"] == 90 for r in d["reviewers"]); cancelled=[r for r in d["reviewers"] if r["status"] == "cancelled"]; assert cancelled and all(r["error"] == "stopped after small-fix policy was satisfied" for r in cancelled)' <<<"$out" \
   || fail "small-fix degraded evidence contract failed: $out"
 
 # SIGINT must leave machine-readable termination evidence instead of an empty
@@ -156,13 +232,17 @@ python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and not
 make_slow_stub mimo 5 '{"sessionID":"M4","type":"text","part":{"id":"p1","text":"mimo late"}}'
 make_slow_stub grok 5 '{"text":"grok late","stopReason":"EndTurn","sessionId":"K4"}'
 PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --cross-review mimo,grok --cd "$SBOX/repo" \
-  --format json --PROMPT interrupted >"$SBOX/interrupted.json" 2>/dev/null &
+  --progress jsonl --format json --PROMPT interrupted \
+  >"$SBOX/interrupted.json" 2>"$SBOX/interrupted-events.jsonl" &
 interrupt_pid=$!
-sleep 0.2
+wait_for_event "$SBOX/interrupted-events.jsonl" cross_review_started \
+  || fail "interrupt test never observed cross-review start"
 kill -INT "$interrupt_pid"
 if wait "$interrupt_pid"; then fail "interrupted cross-review should exit non-zero"; fi
-python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert d["finished_at"].endswith("Z")' "$SBOX/interrupted.json" \
+python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert d["finished_at"].endswith("Z"); cancelled=[r for r in d["reviewers"] if r["status"] == "cancelled"]; assert cancelled and all(r["error"] == "review terminated by user" for r in cancelled)' "$SBOX/interrupted.json" \
   || fail "interrupted review should preserve structured evidence"
+wait_for_event "$SBOX/interrupted-events.jsonl" cross_review_terminated \
+  || fail "interrupted review should emit termination progress"
 
 make_stub mimo '{"sessionID":"M1","type":"text","part":{"id":"p1","text":"mimo ok"}}'
 make_stub grok '{"text":"grok ok","stopReason":"EndTurn","sessionId":"K1"}'
@@ -189,6 +269,74 @@ out="$(run --list)"
 python3 -c 'import sys,json; row=next(r for r in json.load(sys.stdin) if r["agent"] == "grok"); assert row["routing_priority"] == "deprioritized"' <<<"$out" \
   || fail "a provider with a current failure streak should be deprioritized"
 
+# Auto selection is deterministic, excludes the orchestrator family, and
+# prefers healthy candidates from distinct families over degraded providers.
+HEALTH="$DEV_WORKFLOW_DATA/external-agent-health.json"
+python3 - "$HEALTH" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+agents = data.setdefault("agents", {})
+agents.update({
+    "mimo": {"status": "healthy", "recommended_timeout_seconds": 300, "last_duration_seconds": 20, "consecutive_failures": 0},
+    "antigravity": {"status": "healthy", "recommended_timeout_seconds": 300, "last_duration_seconds": 30, "consecutive_failures": 0},
+    "gemini": {"status": "degraded", "recommended_timeout_seconds": 300, "last_duration_seconds": 2, "consecutive_failures": 2},
+    "opencode": {"status": "slow", "recommended_timeout_seconds": 300, "last_duration_seconds": 3, "consecutive_failures": 0},
+    "cursor": {"status": "slow", "recommended_timeout_seconds": 300, "last_duration_seconds": 10, "consecutive_failures": 0},
+    "grok": {"status": "degraded", "recommended_timeout_seconds": 100, "last_duration_seconds": 5, "consecutive_failures": 2},
+})
+json.dump(data, open(path, "w", encoding="utf-8"))
+PY
+make_stub mimo '{"sessionID":"M-auto","type":"text","part":{"id":"p1","text":"mimo auto"}}'
+make_stub agy 'agy auto'
+auto_one="$(run --cross-review auto --orchestrator-family openai --review-profile small-fix --cd "$SBOX/repo" --format json --PROMPT auto)"
+auto_two="$(run --cross-review auto --orchestrator-family openai --review-profile small-fix --cd "$SBOX/repo" --format json --PROMPT auto)"
+python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=json.loads(sys.argv[2]); selected=a["selection"]["selected_reviewers"]; selected_two=b["selection"]["selected_reviewers"]; assert set(selected) == set(selected_two); assert a["selection"]["mode"] == "auto"; assert a["selection"]["orchestrator_family"] == "openai"; assert len(selected) == 2; assert all(r["family"] != "openai" for r in a["reviewers"]); assert len({r["family"] for r in a["reviewers"]}) == 2; assert "grok" not in selected; assert set(selected) == {"mimo", "antigravity"}, selected' "$auto_one" "$auto_two" \
+  || fail "auto reviewer selection should be stable and health-aware"
+
+ONE_FAMILY="$SBOX/one-family"
+mkdir -p "$ONE_FAMILY/bin" "$ONE_FAMILY/data"
+cp "$SBOX/bin/mimo" "$ONE_FAMILY/bin/mimo"
+if PATH="$ONE_FAMILY/bin:/usr/bin:/bin" DEV_WORKFLOW_DATA="$ONE_FAMILY/data" \
+  /usr/bin/python3 "$RUNNER" --cross-review auto --orchestrator-family openai \
+  --progress none --cd "$SBOX/repo" --format json --PROMPT one-family \
+  >"$ONE_FAMILY/final.json" 2>/dev/null; then
+  fail "auto selection should fail when two installed families are unavailable"
+fi
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["selection"]["mode"] == "auto"; assert "two installed reviewer families" in d["error"]' "$ONE_FAMILY/final.json" \
+  || fail "auto selection failure should preserve structured evidence"
+
+UNKNOWN_FAMILY="$SBOX/unknown-family"
+mkdir -p "$UNKNOWN_FAMILY/bin" "$UNKNOWN_FAMILY/data"
+cp "$SBOX/bin/mimo" "$UNKNOWN_FAMILY/bin/mimo"
+make_stub opencode '{"type":"text","part":{"text":"opencode unknown provider"}}'
+cp "$SBOX/bin/opencode" "$UNKNOWN_FAMILY/bin/opencode"
+if PATH="$UNKNOWN_FAMILY/bin:/usr/bin:/bin" DEV_WORKFLOW_DATA="$UNKNOWN_FAMILY/data" \
+  /usr/bin/python3 "$RUNNER" --cross-review auto --orchestrator-family openai \
+  --progress none --cd "$SBOX/repo" --format json --PROMPT unknown-family \
+  >"$UNKNOWN_FAMILY/final.json" 2>/dev/null; then
+  fail "auto selection should not treat an unknown opencode provider as an independent family"
+fi
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert "two installed reviewer families" in d["error"]; assert "opencode" not in d["selection"]["selected_reviewers"]' "$UNKNOWN_FAMILY/final.json" \
+  || fail "auto selection should exclude configurable-family reviewers without provider evidence"
+
+# A cancelled reviewer can die while holding the health lock. A lock whose
+# recorded owner PID is gone must be reclaimed immediately, not after the
+# five-second acquisition timeout.
+ORPHAN_DATA="$SBOX/orphan-health"
+ORPHAN_LOCK="$ORPHAN_DATA/external-agent-health.json.lock"
+mkdir -p "$ORPHAN_LOCK"
+printf '999999\n' > "$ORPHAN_LOCK/owner.pid"
+make_stub mimo '{"sessionID":"M-orphan","type":"text","part":{"id":"p1","text":"mimo orphan"}}'
+orphan_started="$SECONDS"
+PATH="$SBOX/bin:$PATH" DEV_WORKFLOW_DATA="$ORPHAN_DATA" \
+  python3 "$RUNNER" --progress none --agent mimo --cd "$SBOX/repo" --PROMPT orphan >/dev/null
+orphan_elapsed=$((SECONDS - orphan_started))
+[ "$orphan_elapsed" -lt 2 ] \
+  || fail "dead health-lock owner should be reclaimed immediately, elapsed=${orphan_elapsed}s"
+
 make_slow_stub agy 2 'agy late'
 if out="$(run --cross-review agy,mimo --timeout 1 --cd "$SBOX/repo" --format json --PROMPT review 2>/dev/null)"; then
   fail "timed-out provider should not form quorum"
@@ -214,6 +362,35 @@ make_stub agy 'agy recovered'
 run --agent agy --timeout 2 --cd "$SBOX/repo" --PROMPT review >/dev/null
 python3 -c 'import sys,json; h=json.load(open(sys.argv[1]))["agents"]["antigravity"]; assert h["status"] == "slow"; assert h["consecutive_timeouts"] == 0; assert h["success_count"] >= 1' "$HEALTH" \
   || fail "a successful retry should clear the failure streak but retain slow history"
+
+# Persisted recommendations are diagnostics, not permission to expand a
+# standard task beyond its implicit 600-second hard budget. Explicit timeout
+# remains authoritative even when it exceeds that cap.
+python3 - "$HEALTH" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+for name in ("mimo", "grok"):
+    entry = data.setdefault("agents", {}).setdefault(name, {})
+    entry["recommended_timeout_seconds"] = 2400
+    entry["status"] = "slow"
+    entry["consecutive_failures"] = 0
+json.dump(data, open(path, "w", encoding="utf-8"))
+PY
+make_stub mimo '{"sessionID":"M-cap","type":"text","part":{"id":"p1","text":"mimo capped"}}'
+make_stub grok '{"text":"grok capped","stopReason":"EndTurn","sessionId":"K-cap"}'
+PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --cross-review mimo,grok \
+  --progress jsonl --cd "$SBOX/repo" --format json --PROMPT capped \
+  >"$SBOX/capped-final.json" 2>"$SBOX/capped-events.jsonl"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert all(r["timeout_seconds"] == 600 and r["timeout_source"] == "provider_capped" for r in d["reviewers"])' "$SBOX/capped-final.json" \
+  || fail "standard implicit timeout should cap provider recommendations at 600s"
+python3 -c 'import json,sys; rows=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; rows=[r for r in rows if r["event"] == "review_started"]; assert len(rows) == 2; assert all(r["timeout_seconds"] == 600 and r["timeout_source"] == "provider_capped" for r in rows)' "$SBOX/capped-events.jsonl" \
+  || fail "review start events should expose the capped timeout source"
+out="$(run --cross-review mimo,grok --timeout 700 --cd "$SBOX/repo" --format json --PROMPT explicit-cap)"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert all(r["timeout_seconds"] == 700 and r["timeout_source"] == "explicit" for r in d["reviewers"])' <<<"$out" \
+  || fail "explicit timeout should override the implicit standard cap"
 
 # Concurrent provider completions must not overwrite each other's health events.
 CONCURRENT_DATA="$SBOX/concurrent-health"
@@ -273,6 +450,12 @@ grep -q 'recommended_timeout_seconds' "$SKILL" || fail "persistent provider time
 grep -q 'degraded' "$SKILL" || fail "provider health escalation policy missing from skill"
 grep -q 'routing_priority' "$SKILL" || fail "health-aware routing priority missing from skill"
 grep -q -- '--review-profile small-fix' "$SKILL" || fail "small-fix review profile missing from skill"
+grep -q -- '--progress jsonl' "$SKILL" || fail "live progress JSONL usage missing from skill"
+grep -q -- '--cross-review auto' "$SKILL" || fail "automatic reviewer routing missing from skill"
+grep -q -- '--orchestrator-family openai' "$SKILL" || fail "orchestrator-family exclusion missing from skill"
+grep -q 'cross_review_started' "$SKILL" || fail "cross-review lifecycle start event missing from skill"
+grep -q 'review_finished' "$SKILL" || fail "review lifecycle completion event missing from skill"
+grep -q '600' "$SKILL" || fail "standard implicit timeout cap missing from skill"
 grep -q '并行\|parallel' "$SKILL" || fail "parallel cross-review policy missing from skill"
 grep -q 'terminated' "$SKILL" || fail "terminated evidence contract missing from skill"
 for a in codex gemini mimo cursor grok opencode antigravity; do

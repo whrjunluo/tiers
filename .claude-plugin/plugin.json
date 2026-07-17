@@ -1,6 +1,6 @@
 {
   "name": "dev-workflow",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "分级开发工作流路由（L0–L4）：判级加固、跨 session 续行、跨项目自主进化、codegraph 判级集成、grilling 设计追问、统一 external-agent 多模型委派（codex / cursor / grok / mimo / opencode / antigravity）。",
   "author": {
     "name": "elvis"

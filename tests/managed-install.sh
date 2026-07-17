@@ -54,8 +54,8 @@ manifests = (
 print(",".join(json.loads((root / path).read_text(encoding="utf-8"))["version"] for path in manifests))
 PY
 )"
-[ "$release_versions" = "0.8.0,0.8.0,0.8.0" ] || \
-  fail "release manifests must all be 0.8.0, found $release_versions"
+[ "$release_versions" = "0.8.1,0.8.1,0.8.1" ] || \
+  fail "release manifests must all be 0.8.1, found $release_versions"
 
 python3 - "$ROOT" "$SOURCE" <<'PY'
 import json

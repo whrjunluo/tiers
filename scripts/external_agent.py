@@ -203,11 +203,13 @@ ALIASES = {"agy": "antigravity", "cursor-agent": "cursor"}
 # ----------------------------------------------------------------------------- persistent provider health
 
 DEFAULT_TIMEOUT_SECONDS = 600
+STANDARD_TIMEOUT_CAP_SECONDS = 600
 SMALL_FIX_TIMEOUT_SECONDS = 90
 MAX_RECOMMENDED_TIMEOUT_SECONDS = 3600
 HEALTH_LOCK_TIMEOUT_SECONDS = 5.0
 HEALTH_LOCK_STALE_SECONDS = 30.0
 RUNNER_ID = "tiers.external-agent/v1"
+EVENT_RUNNER_ID = "tiers.external-agent-events/v1"
 
 
 def _health_path() -> str:
@@ -243,6 +245,43 @@ def _write_health(data: dict) -> None:
             pass
 
 
+def _health_lock_owner_path(path: str) -> str:
+    return os.path.join(path, "owner.pid")
+
+
+def _health_lock_owner_alive(path: str) -> Optional[bool]:
+    try:
+        with open(_health_lock_owner_path(path), encoding="utf-8") as handle:
+            pid = int(handle.read().strip())
+    except (FileNotFoundError, OSError, TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return None
+    return True
+
+
+def _remove_health_lock(path: str) -> bool:
+    try:
+        os.unlink(_health_lock_owner_path(path))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    try:
+        os.rmdir(path)
+        return True
+    except (FileNotFoundError, OSError):
+        return False
+
+
 def _acquire_health_lock() -> Optional[str]:
     path = f"{_health_path()}.lock"
     deadline = time.monotonic() + HEALTH_LOCK_TIMEOUT_SECONDS
@@ -254,12 +293,21 @@ def _acquire_health_lock() -> Optional[str]:
     while True:
         try:
             os.mkdir(path)
+            try:
+                with open(_health_lock_owner_path(path), "w", encoding="utf-8") as handle:
+                    handle.write(f"{os.getpid()}\n")
+            except OSError:
+                _remove_health_lock(path)
+                return None
             return path
         except FileExistsError:
             try:
+                if _health_lock_owner_alive(path) is False:
+                    if _remove_health_lock(path):
+                        continue
                 if time.time() - os.path.getmtime(path) > HEALTH_LOCK_STALE_SECONDS:
-                    os.rmdir(path)
-                    continue
+                    if _remove_health_lock(path):
+                        continue
             except (FileNotFoundError, OSError):
                 pass
             if time.monotonic() >= deadline:
@@ -270,26 +318,30 @@ def _acquire_health_lock() -> Optional[str]:
 
 
 def _release_health_lock(path: str) -> None:
-    try:
-        os.rmdir(path)
-    except OSError:
-        pass
+    _remove_health_lock(path)
 
 
 def _health_entry(agent: str) -> dict:
     return _load_health().get("agents", {}).get(agent, {})
 
 
-def _effective_timeout(agent: str, explicit_timeout: Optional[int],
-                       review_profile: str = "standard") -> int:
+def _effective_timeout_details(agent: str, explicit_timeout: Optional[int],
+                               review_profile: str = "standard") -> Tuple[int, str]:
     if explicit_timeout is not None:
-        return explicit_timeout
+        return explicit_timeout, "explicit"
     if review_profile == "small-fix":
-        return SMALL_FIX_TIMEOUT_SECONDS
+        return SMALL_FIX_TIMEOUT_SECONDS, "profile"
     recommended = _health_entry(agent).get("recommended_timeout_seconds")
     if isinstance(recommended, int) and recommended > 0:
-        return recommended
-    return DEFAULT_TIMEOUT_SECONDS
+        bounded = min(recommended, STANDARD_TIMEOUT_CAP_SECONDS)
+        source = "provider" if bounded == recommended else "provider_capped"
+        return bounded, source
+    return DEFAULT_TIMEOUT_SECONDS, "default"
+
+
+def _effective_timeout(agent: str, explicit_timeout: Optional[int],
+                       review_profile: str = "standard") -> int:
+    return _effective_timeout_details(agent, explicit_timeout, review_profile)[0]
 
 
 def _record_health(agent: str, event: str, timeout: int, duration: float,
@@ -357,6 +409,68 @@ def _health_metadata(agent: str) -> dict:
         "consecutive_timeouts": entry.get("consecutive_timeouts", 0),
         "consecutive_failures": entry.get("consecutive_failures", 0),
     }
+
+
+HEALTH_ROUTE_RANK = {"healthy": 0, "unknown": 1, "slow": 2, "degraded": 3}
+PRIORITY_ROUTE_RANK = {"normal": 0, "deprioritized": 1}
+
+
+def _auto_review_candidates(review_profile: str,
+                            orchestrator_family: str = "") -> List[dict]:
+    candidates = []
+    for name, spec in AGENTS.items():
+        if spec["family"] == "configurable":
+            # Auto routing cannot prove which provider an OpenCode installation
+            # uses, so it must not count that nominal label as an independent
+            # review family. Explicit routing remains available to the operator.
+            continue
+        if orchestrator_family and spec["family"] == orchestrator_family:
+            continue
+        path = shutil.which(spec["bin"])
+        if not path:
+            continue
+        health = _health_metadata(name)
+        entry = _health_entry(name)
+        timeout, timeout_source = _effective_timeout_details(
+            name, None, review_profile)
+        duration = entry.get("last_duration_seconds")
+        if not isinstance(duration, (int, float)) or duration < 0:
+            duration = float("inf")
+        candidates.append({
+            "agent": name,
+            "family": spec["family"],
+            "path": path,
+            "health_status": health["health_status"],
+            "routing_priority": health["routing_priority"],
+            "timeout_seconds": timeout,
+            "timeout_source": timeout_source,
+            "last_duration_seconds": duration,
+        })
+    return sorted(
+        candidates,
+        key=lambda row: (
+            PRIORITY_ROUTE_RANK.get(row["routing_priority"], 99),
+            HEALTH_ROUTE_RANK.get(row["health_status"], 99),
+            row["timeout_seconds"],
+            row["last_duration_seconds"],
+            row["agent"],
+        ),
+    )
+
+
+def _select_auto_reviewers(review_profile: str,
+                           orchestrator_family: str = "") -> List[str]:
+    candidates = _auto_review_candidates(review_profile, orchestrator_family)
+    if not candidates:
+        raise ValueError("auto cross-review requires two installed reviewer families")
+    first = candidates[0]
+    second = next(
+        (candidate for candidate in candidates if candidate["family"] != first["family"]),
+        None,
+    )
+    if second is None:
+        raise ValueError("auto cross-review requires two installed reviewer families")
+    return [first["agent"], second["agent"]]
 
 
 # ----------------------------------------------------------------------------- parsers
@@ -519,6 +633,58 @@ def emit_cross_review(args, report):
     sys.exit(0 if report["success"] else 1)
 
 
+class ProgressEmitter:
+    """Thread-safe JSONL lifecycle output kept separate from final stdout."""
+
+    def __init__(self, enabled: bool, review_profile: str) -> None:
+        self.enabled = enabled
+        self.review_profile = review_profile
+        self._sequence = 0
+        self._lock = threading.Lock()
+
+    def emit(self, event: str, **fields) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._sequence += 1
+            payload = {
+                "runner": EVENT_RUNNER_ID,
+                "sequence": self._sequence,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "event": event,
+                "review_profile": self.review_profile,
+                **fields,
+            }
+            sys.stderr.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+            sys.stderr.flush()
+
+
+class ReviewCancellation:
+    """One cancellation signal with a stable machine-readable reason."""
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._reason = ""
+        self._lock = threading.Lock()
+
+    def cancel(self, reason: str) -> None:
+        with self._lock:
+            if not self._reason:
+                self._reason = reason
+            self._event.set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def error_message(self) -> str:
+        with self._lock:
+            if self._reason == "small_fix_policy_satisfied":
+                return "stopped after small-fix policy was satisfied"
+            if self._reason == "user_interrupt":
+                return "review terminated by user"
+            return "review terminated before completion"
+
+
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     if proc.poll() is not None:
         return
@@ -538,7 +704,7 @@ def _terminate_process_group(proc: subprocess.Popen) -> None:
 
 def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
                            input_text: str,
-                           stop_event: threading.Event) -> Tuple[str, int, str, str]:
+                           cancellation: ReviewCancellation) -> Tuple[str, int, str, str]:
     """Capture a child runner while allowing a sibling success or user stop to cancel it."""
     proc = subprocess.Popen(
         cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -548,7 +714,7 @@ def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
     started = time.monotonic()
     pending_input: Optional[str] = input_text
     while True:
-        if stop_event.is_set():
+        if cancellation.is_set():
             _terminate_process_group(proc)
             out, err = proc.communicate()
             return "cancelled", proc.returncode or 1, out or "", err or ""
@@ -564,16 +730,26 @@ def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
 
 
 def _cross_review_one(args, prompt: str, name: str,
-                      stop_event: threading.Event) -> dict:
+                      cancellation: ReviewCancellation,
+                      progress: ProgressEmitter) -> dict:
     spec = AGENTS[name]
-    timeout = _effective_timeout(name, args.timeout, args.review_profile)
+    timeout, timeout_source = _effective_timeout_details(
+        name, args.timeout, args.review_profile)
     reviewer = {
         "agent": name,
         "family": spec["family"],
         "success": False,
         "status": "failed",
         "timeout_seconds": timeout,
+        "timeout_source": timeout_source,
     }
+    progress.emit(
+        "review_started",
+        agent=name,
+        family=spec["family"],
+        timeout_seconds=timeout,
+        timeout_source=timeout_source,
+    )
     started = time.monotonic()
     cmd = [
         sys.executable, os.path.abspath(__file__),
@@ -588,10 +764,10 @@ def _cross_review_one(args, prompt: str, name: str,
         cmd.append("--require-permissions")
     try:
         capture_status, rc, out, err = _capture_interruptible(
-            cmd, args.cd, timeout + 5, prompt, stop_event)
+            cmd, args.cd, timeout + 5, prompt, cancellation)
         if capture_status == "cancelled":
             reviewer["status"] = "cancelled"
-            reviewer["error"] = "stopped after small-fix policy was satisfied"
+            reviewer["error"] = cancellation.error_message()
             return reviewer
         data = json.loads(out) if out.strip() else {}
     except subprocess.TimeoutExpired:
@@ -614,6 +790,17 @@ def _cross_review_one(args, prompt: str, name: str,
             reviewer["error"] = error
     finally:
         reviewer["duration_seconds"] = round(time.monotonic() - started, 3)
+        progress.emit(
+            "review_finished",
+            agent=name,
+            family=spec["family"],
+            status=reviewer["status"],
+            success=reviewer["success"],
+            timeout_seconds=timeout,
+            timeout_source=timeout_source,
+            duration_seconds=reviewer["duration_seconds"],
+            **({"error": reviewer["error"]} if reviewer.get("error") else {}),
+        )
     return reviewer
 
 
@@ -627,6 +814,7 @@ def cross_review(args, prompt):
     artifact_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     repo_fingerprint = repository_fingerprint(args.cd) if args.context == "git" else None
     small_fix = args.review_profile == "small-fix"
+    progress = ProgressEmitter(args.progress == "jsonl", args.review_profile)
     report = {
         "runner": RUNNER_ID,
         "success": False,
@@ -643,18 +831,39 @@ def cross_review(args, prompt):
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "successful_families": [],
         "reviewers": [],
+        "selection": {
+            "mode": "auto" if args.cross_review.strip() == "auto" else "explicit",
+            "orchestrator_family": args.orchestrator_family or None,
+            "selected_reviewers": [],
+        },
     }
 
     def fail(message: str) -> None:
         report["error"] = message
         _finish_cross_review(report, started)
+        progress.emit(
+            "cross_review_finished",
+            success=False,
+            quorum=False,
+            outcome=report["outcome"],
+            duration_seconds=report["duration_seconds"],
+            error=message,
+        )
         emit_cross_review(args, report)
 
     if args.context == "git" and not repo_fingerprint:
         fail("--context git requires a Git worktree for repository binding")
 
-    requested = [part.strip() for part in args.cross_review.split(",") if part.strip()]
-    normalized = [ALIASES.get(name, name) for name in requested]
+    if args.cross_review.strip() == "auto":
+        try:
+            normalized = _select_auto_reviewers(
+                args.review_profile, args.orchestrator_family)
+        except ValueError as exc:
+            fail(str(exc))
+    else:
+        requested = [part.strip() for part in args.cross_review.split(",") if part.strip()]
+        normalized = [ALIASES.get(name, name) for name in requested]
+    report["selection"]["selected_reviewers"] = normalized
     if len(normalized) < 2:
         fail("cross-review requires at least two agents")
     if len(set(normalized)) != len(normalized):
@@ -668,45 +877,79 @@ def cross_review(args, prompt):
     if len(selected_families) < 2:
         fail("cross-review requires agents from at least two families")
 
-    stop_event = threading.Event()
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(normalized))
-    futures = {
-        executor.submit(_cross_review_one, args, prompt, name, stop_event): name
-        for name in normalized
-    }
+    cancellation = ReviewCancellation()
+    executor = None
+    futures = {}
     results = {}
     interrupted = False
+    policy_event_emitted = False
     previous_sigint = signal.getsignal(signal.SIGINT)
     previous_sigterm = signal.getsignal(signal.SIGTERM)
+    sigint_installed = False
+    sigterm_installed = False
 
     def interrupt_review(_signum, _frame):
         raise KeyboardInterrupt
 
-    signal.signal(signal.SIGINT, interrupt_review)
-    signal.signal(signal.SIGTERM, interrupt_review)
     try:
+        signal.signal(signal.SIGINT, interrupt_review)
+        sigint_installed = True
+        signal.signal(signal.SIGTERM, interrupt_review)
+        sigterm_installed = True
+        progress.emit(
+            "cross_review_started",
+            agents=normalized,
+            families=sorted(selected_families),
+            policy=report["policy"],
+            selection=report["selection"],
+        )
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(normalized))
+        for name in normalized:
+            future = executor.submit(
+                _cross_review_one, args, prompt, name, cancellation, progress)
+            futures[future] = name
         for future in concurrent.futures.as_completed(futures):
             name = futures[future]
             try:
                 reviewer = future.result()
             except Exception as exc:
+                timeout, timeout_source = _effective_timeout_details(
+                    name, args.timeout, args.review_profile)
                 reviewer = {
                     "agent": name, "family": AGENTS[name]["family"],
                     "success": False, "status": "failed",
-                    "timeout_seconds": _effective_timeout(
-                        name, args.timeout, args.review_profile),
+                    "timeout_seconds": timeout,
+                    "timeout_source": timeout_source,
                     "duration_seconds": 0.0, "error": str(exc),
                 }
             results[reviewer["agent"]] = reviewer
+            completed_successes = [item for item in results.values() if item["success"]]
+            completed_families = {item["family"] for item in completed_successes}
+            policy_satisfied = (
+                bool(completed_successes) if small_fix
+                else len(completed_successes) >= 2 and len(completed_families) >= 2
+            )
+            if policy_satisfied and not policy_event_emitted:
+                policy_event_emitted = True
+                progress.emit(
+                    "policy_satisfied",
+                    successful_agents=[item["agent"] for item in completed_successes],
+                    successful_families=sorted(completed_families),
+                    quorum=not small_fix,
+                )
             if small_fix and reviewer["success"]:
-                stop_event.set()
+                cancellation.cancel("small_fix_policy_satisfied")
     except KeyboardInterrupt:
         interrupted = True
-        stop_event.set()
+        cancellation.cancel("user_interrupt")
+        progress.emit("cross_review_terminated", reason="user_interrupt")
     finally:
-        executor.shutdown(wait=True, cancel_futures=True)
-        signal.signal(signal.SIGINT, previous_sigint)
-        signal.signal(signal.SIGTERM, previous_sigterm)
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        if sigint_installed:
+            signal.signal(signal.SIGINT, previous_sigint)
+        if sigterm_installed:
+            signal.signal(signal.SIGTERM, previous_sigterm)
 
     for future, name in futures.items():
         if name in results:
@@ -715,22 +958,39 @@ def cross_review(args, prompt):
             try:
                 results[name] = future.result()
             except Exception as exc:  # Preserve evidence instead of hiding worker failures.
+                timeout, timeout_source = _effective_timeout_details(
+                    name, args.timeout, args.review_profile)
                 results[name] = {
                     "agent": name, "family": AGENTS[name]["family"],
                     "success": False, "status": "failed",
-                    "timeout_seconds": _effective_timeout(
-                        name, args.timeout, args.review_profile),
+                    "timeout_seconds": timeout,
+                    "timeout_source": timeout_source,
                     "duration_seconds": 0.0, "error": str(exc),
                 }
         else:
+            timeout, timeout_source = _effective_timeout_details(
+                name, args.timeout, args.review_profile)
             results[name] = {
                 "agent": name, "family": AGENTS[name]["family"],
                 "success": False, "status": "cancelled",
-                "timeout_seconds": _effective_timeout(
-                    name, args.timeout, args.review_profile),
+                "timeout_seconds": timeout,
+                "timeout_source": timeout_source,
                 "duration_seconds": 0.0,
-                "error": "review terminated before completion",
+                "error": cancellation.error_message(),
             }
+    for name in normalized:
+        if name in results:
+            continue
+        timeout, timeout_source = _effective_timeout_details(
+            name, args.timeout, args.review_profile)
+        results[name] = {
+            "agent": name, "family": AGENTS[name]["family"],
+            "success": False, "status": "cancelled",
+            "timeout_seconds": timeout,
+            "timeout_source": timeout_source,
+            "duration_seconds": 0.0,
+            "error": cancellation.error_message(),
+        }
     report["reviewers"] = [results[name] for name in normalized]
 
     successful = [reviewer for reviewer in report["reviewers"] if reviewer["success"]]
@@ -750,6 +1010,13 @@ def cross_review(args, prompt):
     else:
         report["error"] = "cross-review quorum not met: need two successful distinct families"
     _finish_cross_review(report, started)
+    progress.emit(
+        "cross_review_finished",
+        success=report["success"],
+        quorum=report["quorum"],
+        outcome=report["outcome"],
+        duration_seconds=report["duration_seconds"],
+    )
     emit_cross_review(args, report)
 
 
@@ -757,6 +1024,12 @@ def main():
     ap = argparse.ArgumentParser(description="Unified external-agent runner")
     ap.add_argument("--agent", help="codex|gemini|mimo|cursor|grok|antigravity")
     ap.add_argument("--cross-review", default="", help="Comma-separated read-only reviewers.")
+    ap.add_argument(
+        "--orchestrator-family",
+        choices=sorted({spec["family"] for spec in AGENTS.values()}),
+        default="",
+        help="Exclude the main orchestrator family when --cross-review auto is used.",
+    )
     ap.add_argument("--cd", default=os.getcwd(), help="Workspace root.")
     ap.add_argument("--PROMPT", default="", help="Prompt (or pass on stdin).")
     ap.add_argument("--mode", choices=["review", "delegate"], default="review")
@@ -771,6 +1044,8 @@ def main():
     ap.add_argument("--review-profile", choices=["standard", "small-fix"],
                     default="standard",
                     help="Cross-review policy; small-fix defaults to 90s and one-success degradation.")
+    ap.add_argument("--progress", choices=["jsonl", "none"], default="jsonl",
+                    help="Cross-review lifecycle events on stderr; final report remains on stdout.")
     ap.add_argument("--list", action="store_true", help="List installed agents and exit.")
     ap.add_argument("--fingerprint", action="store_true",
                     help="Print the current reviewable Git snapshot SHA-256 and exit.")

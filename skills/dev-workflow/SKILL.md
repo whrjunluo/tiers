@@ -117,16 +117,20 @@ provider 优先级：
 
 ```bash
 python3 <plugin-root>/scripts/external_agent.py \
-  --cross-review agy,mimo --cd "$PWD" --context git --format json \
+  --cross-review auto --orchestrator-family openai --progress jsonl \
+  --cd "$PWD" --context git --format json \
   --PROMPT "只读审查当前改动，只报告有证据的问题" \
   > docs/superpowers/.workflow-evidence/external-review.json
 ```
+
+`--progress jsonl` 把 `cross_review_started` / `review_started` / `review_finished` / `policy_satisfied` / `cross_review_terminated` / `cross_review_finished` 实时写到 stderr；stdout 只保留最终 JSON，可稳定重定向为完成证据。这些事件只提供可观测性，不会降低 standard 双家族 quorum。`auto` 会按安装状态、provider 健康和家族去重选两个 reviewer，`--orchestrator-family` 用于排除主流程自身家族。当 `opencode` 的实际 provider 家族无法证明时，auto 不会把它当成独立家族候选；只有 operator 能核实 provider 时才显式指定。standard 未显式传 `--timeout` 时，provider 建议最多只能把单 reviewer 等待抬到 600 秒；显式 timeout 仍可覆盖该上限。
 
 small-fix 仍从两个不同 family 启动 reviewer，但默认每个 90 秒；第一个有效外部意见返回后即可取消仍在等待的 reviewer：
 
 ```bash
 python3 <plugin-root>/scripts/external_agent.py \
-  --cross-review cursor,mimo --review-profile small-fix \
+  --cross-review auto --orchestrator-family openai \
+  --review-profile small-fix --progress jsonl \
   --cd "$PWD" --context git --format json \
   --PROMPT "只读审查这个已冻结的窄修复，只报告有证据的问题" \
   > docs/superpowers/.workflow-evidence/external-review.json
