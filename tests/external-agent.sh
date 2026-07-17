@@ -390,6 +390,12 @@ grep -q 'recommended_timeout_seconds' "$SKILL" || fail "persistent provider time
 grep -q 'degraded' "$SKILL" || fail "provider health escalation policy missing from skill"
 grep -q 'routing_priority' "$SKILL" || fail "health-aware routing priority missing from skill"
 grep -q -- '--review-profile small-fix' "$SKILL" || fail "small-fix review profile missing from skill"
+grep -q -- '--progress jsonl' "$SKILL" || fail "live progress JSONL usage missing from skill"
+grep -q -- '--cross-review auto' "$SKILL" || fail "automatic reviewer routing missing from skill"
+grep -q -- '--orchestrator-family openai' "$SKILL" || fail "orchestrator-family exclusion missing from skill"
+grep -q 'cross_review_started' "$SKILL" || fail "cross-review lifecycle start event missing from skill"
+grep -q 'review_finished' "$SKILL" || fail "review lifecycle completion event missing from skill"
+grep -q '600' "$SKILL" || fail "standard implicit timeout cap missing from skill"
 grep -q '并行\|parallel' "$SKILL" || fail "parallel cross-review policy missing from skill"
 grep -q 'terminated' "$SKILL" || fail "terminated evidence contract missing from skill"
 for a in codex gemini mimo cursor grok opencode antigravity; do
