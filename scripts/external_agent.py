@@ -208,6 +208,7 @@ MAX_RECOMMENDED_TIMEOUT_SECONDS = 3600
 HEALTH_LOCK_TIMEOUT_SECONDS = 5.0
 HEALTH_LOCK_STALE_SECONDS = 30.0
 RUNNER_ID = "tiers.external-agent/v1"
+EVENT_RUNNER_ID = "tiers.external-agent-events/v1"
 
 
 def _health_path() -> str:
@@ -519,6 +520,32 @@ def emit_cross_review(args, report):
     sys.exit(0 if report["success"] else 1)
 
 
+class ProgressEmitter:
+    """Thread-safe JSONL lifecycle output kept separate from final stdout."""
+
+    def __init__(self, enabled: bool, review_profile: str) -> None:
+        self.enabled = enabled
+        self.review_profile = review_profile
+        self._sequence = 0
+        self._lock = threading.Lock()
+
+    def emit(self, event: str, **fields) -> None:
+        if not self.enabled:
+            return
+        with self._lock:
+            self._sequence += 1
+            payload = {
+                "runner": EVENT_RUNNER_ID,
+                "sequence": self._sequence,
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "event": event,
+                "review_profile": self.review_profile,
+                **fields,
+            }
+            sys.stderr.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+            sys.stderr.flush()
+
+
 def _terminate_process_group(proc: subprocess.Popen) -> None:
     if proc.poll() is not None:
         return
@@ -564,7 +591,8 @@ def _capture_interruptible(cmd: List[str], cwd: str, timeout: int,
 
 
 def _cross_review_one(args, prompt: str, name: str,
-                      stop_event: threading.Event) -> dict:
+                      stop_event: threading.Event,
+                      progress: ProgressEmitter) -> dict:
     spec = AGENTS[name]
     timeout = _effective_timeout(name, args.timeout, args.review_profile)
     reviewer = {
@@ -574,6 +602,12 @@ def _cross_review_one(args, prompt: str, name: str,
         "status": "failed",
         "timeout_seconds": timeout,
     }
+    progress.emit(
+        "review_started",
+        agent=name,
+        family=spec["family"],
+        timeout_seconds=timeout,
+    )
     started = time.monotonic()
     cmd = [
         sys.executable, os.path.abspath(__file__),
@@ -614,6 +648,16 @@ def _cross_review_one(args, prompt: str, name: str,
             reviewer["error"] = error
     finally:
         reviewer["duration_seconds"] = round(time.monotonic() - started, 3)
+        progress.emit(
+            "review_finished",
+            agent=name,
+            family=spec["family"],
+            status=reviewer["status"],
+            success=reviewer["success"],
+            timeout_seconds=timeout,
+            duration_seconds=reviewer["duration_seconds"],
+            **({"error": reviewer["error"]} if reviewer.get("error") else {}),
+        )
     return reviewer
 
 
@@ -627,6 +671,7 @@ def cross_review(args, prompt):
     artifact_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     repo_fingerprint = repository_fingerprint(args.cd) if args.context == "git" else None
     small_fix = args.review_profile == "small-fix"
+    progress = ProgressEmitter(args.progress == "jsonl", args.review_profile)
     report = {
         "runner": RUNNER_ID,
         "success": False,
@@ -648,6 +693,14 @@ def cross_review(args, prompt):
     def fail(message: str) -> None:
         report["error"] = message
         _finish_cross_review(report, started)
+        progress.emit(
+            "cross_review_finished",
+            success=False,
+            quorum=False,
+            outcome=report["outcome"],
+            duration_seconds=report["duration_seconds"],
+            error=message,
+        )
         emit_cross_review(args, report)
 
     if args.context == "git" and not repo_fingerprint:
@@ -668,14 +721,22 @@ def cross_review(args, prompt):
     if len(selected_families) < 2:
         fail("cross-review requires agents from at least two families")
 
+    progress.emit(
+        "cross_review_started",
+        agents=normalized,
+        families=sorted(selected_families),
+        policy=report["policy"],
+    )
+
     stop_event = threading.Event()
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(normalized))
     futures = {
-        executor.submit(_cross_review_one, args, prompt, name, stop_event): name
+        executor.submit(_cross_review_one, args, prompt, name, stop_event, progress): name
         for name in normalized
     }
     results = {}
     interrupted = False
+    policy_event_emitted = False
     previous_sigint = signal.getsignal(signal.SIGINT)
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
@@ -698,11 +759,26 @@ def cross_review(args, prompt):
                     "duration_seconds": 0.0, "error": str(exc),
                 }
             results[reviewer["agent"]] = reviewer
+            completed_successes = [item for item in results.values() if item["success"]]
+            completed_families = {item["family"] for item in completed_successes}
+            policy_satisfied = (
+                bool(completed_successes) if small_fix
+                else len(completed_successes) >= 2 and len(completed_families) >= 2
+            )
+            if policy_satisfied and not policy_event_emitted:
+                policy_event_emitted = True
+                progress.emit(
+                    "policy_satisfied",
+                    successful_agents=[item["agent"] for item in completed_successes],
+                    successful_families=sorted(completed_families),
+                    quorum=not small_fix,
+                )
             if small_fix and reviewer["success"]:
                 stop_event.set()
     except KeyboardInterrupt:
         interrupted = True
         stop_event.set()
+        progress.emit("cross_review_terminated", reason="user_interrupt")
     finally:
         executor.shutdown(wait=True, cancel_futures=True)
         signal.signal(signal.SIGINT, previous_sigint)
@@ -750,6 +826,13 @@ def cross_review(args, prompt):
     else:
         report["error"] = "cross-review quorum not met: need two successful distinct families"
     _finish_cross_review(report, started)
+    progress.emit(
+        "cross_review_finished",
+        success=report["success"],
+        quorum=report["quorum"],
+        outcome=report["outcome"],
+        duration_seconds=report["duration_seconds"],
+    )
     emit_cross_review(args, report)
 
 
@@ -771,6 +854,8 @@ def main():
     ap.add_argument("--review-profile", choices=["standard", "small-fix"],
                     default="standard",
                     help="Cross-review policy; small-fix defaults to 90s and one-success degradation.")
+    ap.add_argument("--progress", choices=["jsonl", "none"], default="jsonl",
+                    help="Cross-review lifecycle events on stderr; final report remains on stdout.")
     ap.add_argument("--list", action="store_true", help="List installed agents and exit.")
     ap.add_argument("--fingerprint", action="store_true",
                     help="Print the current reviewable Git snapshot SHA-256 and exit.")

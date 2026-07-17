@@ -43,8 +43,18 @@ make_stub grok         '{"text":"grok ok","stopReason":"EndTurn","sessionId":"K1
 make_stub opencode     '{"sessionID":"O1","type":"text","part":{"id":"p1","text":"opencode ok"}}'
 make_stub agy          'agy ok'
 
-run() { PATH="$SBOX/bin:$PATH" python3 "$RUNNER" "$@"; }
+run() { PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --progress none "$@"; }
 field() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$2',''))" <<<"$1"; }
+wait_for_event() { # file event [minimum-count]
+  local file="$1" event="$2" minimum="${3:-1}"
+  local count
+  for _ in $(seq 1 100); do
+    count="$(grep -c '\"event\": \"'"$event"'\"' "$file" 2>/dev/null || true)"
+    [ "$count" -ge "$minimum" ] && return 0
+    sleep 0.02
+  done
+  return 1
+}
 
 # --- each agent: json contract parsed correctly -----------------------------
 for pair in "codex|codex ok|T1" "gemini|gemini ok|G1" "mimo|mimo ok|M1" \
@@ -139,6 +149,26 @@ parallel_elapsed="$(python3 -c 'import sys,time; print(time.monotonic()-float(sy
 python3 -c 'import sys; assert float(sys.argv[1]) < 1.8, sys.argv[1]' "$parallel_elapsed" \
   || fail "cross-review should run in parallel, elapsed=${parallel_elapsed}s"
 
+# Lifecycle progress must be observable before slow reviewers finish, while
+# final JSON remains isolated on stdout for evidence consumers.
+make_slow_stub mimo 2 '{"sessionID":"M-progress","type":"text","part":{"id":"p1","text":"mimo progress"}}'
+make_slow_stub grok 2 '{"text":"grok progress","stopReason":"EndTurn","sessionId":"K-progress"}'
+PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --cross-review mimo,grok \
+  --progress jsonl --cd "$SBOX/repo" --format json --PROMPT progress \
+  >"$SBOX/progress-final.json" 2>"$SBOX/progress-events.jsonl" &
+progress_pid=$!
+wait_for_event "$SBOX/progress-events.jsonl" cross_review_started \
+  || fail "cross-review start event was not observable"
+wait_for_event "$SBOX/progress-events.jsonl" review_started 2 \
+  || fail "reviewer start events were not observable"
+kill -0 "$progress_pid" 2>/dev/null \
+  || fail "slow cross-review finished before lifecycle events were observed"
+wait "$progress_pid" || fail "progress-enabled cross-review should succeed"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"] and d["quorum"]' "$SBOX/progress-final.json" \
+  || fail "progress output corrupted final JSON"
+python3 -c 'import json,sys; rows=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; assert rows; assert [r["sequence"] for r in rows] == list(range(1, len(rows)+1)); assert rows[0]["event"] == "cross_review_started"; assert rows[-1]["event"] == "cross_review_finished"' "$SBOX/progress-events.jsonl" \
+  || fail "progress lifecycle contract failed"
+
 # Small-fix review uses a 90-second implicit budget and stops after the first
 # valid external opinion, preserving strict quorum=false in degraded evidence.
 make_stub mimo '{"sessionID":"M3","type":"text","part":{"id":"p1","text":"mimo first"}}'
@@ -156,13 +186,17 @@ python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and not
 make_slow_stub mimo 5 '{"sessionID":"M4","type":"text","part":{"id":"p1","text":"mimo late"}}'
 make_slow_stub grok 5 '{"text":"grok late","stopReason":"EndTurn","sessionId":"K4"}'
 PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --cross-review mimo,grok --cd "$SBOX/repo" \
-  --format json --PROMPT interrupted >"$SBOX/interrupted.json" 2>/dev/null &
+  --progress jsonl --format json --PROMPT interrupted \
+  >"$SBOX/interrupted.json" 2>"$SBOX/interrupted-events.jsonl" &
 interrupt_pid=$!
-sleep 0.2
+wait_for_event "$SBOX/interrupted-events.jsonl" cross_review_started \
+  || fail "interrupt test never observed cross-review start"
 kill -INT "$interrupt_pid"
 if wait "$interrupt_pid"; then fail "interrupted cross-review should exit non-zero"; fi
 python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); assert not d["success"] and not d["quorum"]; assert d["outcome"] == "terminated"; assert d["termination_reason"] == "user_interrupt"; assert d["finished_at"].endswith("Z")' "$SBOX/interrupted.json" \
   || fail "interrupted review should preserve structured evidence"
+wait_for_event "$SBOX/interrupted-events.jsonl" cross_review_terminated \
+  || fail "interrupted review should emit termination progress"
 
 make_stub mimo '{"sessionID":"M1","type":"text","part":{"id":"p1","text":"mimo ok"}}'
 make_stub grok '{"text":"grok ok","stopReason":"EndTurn","sessionId":"K1"}'
