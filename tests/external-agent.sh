@@ -249,6 +249,35 @@ run --agent agy --timeout 2 --cd "$SBOX/repo" --PROMPT review >/dev/null
 python3 -c 'import sys,json; h=json.load(open(sys.argv[1]))["agents"]["antigravity"]; assert h["status"] == "slow"; assert h["consecutive_timeouts"] == 0; assert h["success_count"] >= 1' "$HEALTH" \
   || fail "a successful retry should clear the failure streak but retain slow history"
 
+# Persisted recommendations are diagnostics, not permission to expand a
+# standard task beyond its implicit 600-second hard budget. Explicit timeout
+# remains authoritative even when it exceeds that cap.
+python3 - "$HEALTH" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+data = json.load(open(path, encoding="utf-8"))
+for name in ("mimo", "grok"):
+    entry = data.setdefault("agents", {}).setdefault(name, {})
+    entry["recommended_timeout_seconds"] = 2400
+    entry["status"] = "slow"
+    entry["consecutive_failures"] = 0
+json.dump(data, open(path, "w", encoding="utf-8"))
+PY
+make_stub mimo '{"sessionID":"M-cap","type":"text","part":{"id":"p1","text":"mimo capped"}}'
+make_stub grok '{"text":"grok capped","stopReason":"EndTurn","sessionId":"K-cap"}'
+PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --cross-review mimo,grok \
+  --progress jsonl --cd "$SBOX/repo" --format json --PROMPT capped \
+  >"$SBOX/capped-final.json" 2>"$SBOX/capped-events.jsonl"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert all(r["timeout_seconds"] == 600 and r["timeout_source"] == "provider_capped" for r in d["reviewers"])' "$SBOX/capped-final.json" \
+  || fail "standard implicit timeout should cap provider recommendations at 600s"
+python3 -c 'import json,sys; rows=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; rows=[r for r in rows if r["event"] == "review_started"]; assert len(rows) == 2; assert all(r["timeout_seconds"] == 600 and r["timeout_source"] == "provider_capped" for r in rows)' "$SBOX/capped-events.jsonl" \
+  || fail "review start events should expose the capped timeout source"
+out="$(run --cross-review mimo,grok --timeout 700 --cd "$SBOX/repo" --format json --PROMPT explicit-cap)"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert all(r["timeout_seconds"] == 700 and r["timeout_source"] == "explicit" for r in d["reviewers"])' <<<"$out" \
+  || fail "explicit timeout should override the implicit standard cap"
+
 # Concurrent provider completions must not overwrite each other's health events.
 CONCURRENT_DATA="$SBOX/concurrent-health"
 mkdir -p "$CONCURRENT_DATA"

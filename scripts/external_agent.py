@@ -203,6 +203,7 @@ ALIASES = {"agy": "antigravity", "cursor-agent": "cursor"}
 # ----------------------------------------------------------------------------- persistent provider health
 
 DEFAULT_TIMEOUT_SECONDS = 600
+STANDARD_TIMEOUT_CAP_SECONDS = 600
 SMALL_FIX_TIMEOUT_SECONDS = 90
 MAX_RECOMMENDED_TIMEOUT_SECONDS = 3600
 HEALTH_LOCK_TIMEOUT_SECONDS = 5.0
@@ -281,16 +282,23 @@ def _health_entry(agent: str) -> dict:
     return _load_health().get("agents", {}).get(agent, {})
 
 
-def _effective_timeout(agent: str, explicit_timeout: Optional[int],
-                       review_profile: str = "standard") -> int:
+def _effective_timeout_details(agent: str, explicit_timeout: Optional[int],
+                               review_profile: str = "standard") -> Tuple[int, str]:
     if explicit_timeout is not None:
-        return explicit_timeout
+        return explicit_timeout, "explicit"
     if review_profile == "small-fix":
-        return SMALL_FIX_TIMEOUT_SECONDS
+        return SMALL_FIX_TIMEOUT_SECONDS, "profile"
     recommended = _health_entry(agent).get("recommended_timeout_seconds")
     if isinstance(recommended, int) and recommended > 0:
-        return recommended
-    return DEFAULT_TIMEOUT_SECONDS
+        bounded = min(recommended, STANDARD_TIMEOUT_CAP_SECONDS)
+        source = "provider" if bounded == recommended else "provider_capped"
+        return bounded, source
+    return DEFAULT_TIMEOUT_SECONDS, "default"
+
+
+def _effective_timeout(agent: str, explicit_timeout: Optional[int],
+                       review_profile: str = "standard") -> int:
+    return _effective_timeout_details(agent, explicit_timeout, review_profile)[0]
 
 
 def _record_health(agent: str, event: str, timeout: int, duration: float,
@@ -594,19 +602,22 @@ def _cross_review_one(args, prompt: str, name: str,
                       stop_event: threading.Event,
                       progress: ProgressEmitter) -> dict:
     spec = AGENTS[name]
-    timeout = _effective_timeout(name, args.timeout, args.review_profile)
+    timeout, timeout_source = _effective_timeout_details(
+        name, args.timeout, args.review_profile)
     reviewer = {
         "agent": name,
         "family": spec["family"],
         "success": False,
         "status": "failed",
         "timeout_seconds": timeout,
+        "timeout_source": timeout_source,
     }
     progress.emit(
         "review_started",
         agent=name,
         family=spec["family"],
         timeout_seconds=timeout,
+        timeout_source=timeout_source,
     )
     started = time.monotonic()
     cmd = [
@@ -655,6 +666,7 @@ def _cross_review_one(args, prompt: str, name: str,
             status=reviewer["status"],
             success=reviewer["success"],
             timeout_seconds=timeout,
+            timeout_source=timeout_source,
             duration_seconds=reviewer["duration_seconds"],
             **({"error": reviewer["error"]} if reviewer.get("error") else {}),
         )
@@ -751,11 +763,13 @@ def cross_review(args, prompt):
             try:
                 reviewer = future.result()
             except Exception as exc:
+                timeout, timeout_source = _effective_timeout_details(
+                    name, args.timeout, args.review_profile)
                 reviewer = {
                     "agent": name, "family": AGENTS[name]["family"],
                     "success": False, "status": "failed",
-                    "timeout_seconds": _effective_timeout(
-                        name, args.timeout, args.review_profile),
+                    "timeout_seconds": timeout,
+                    "timeout_source": timeout_source,
                     "duration_seconds": 0.0, "error": str(exc),
                 }
             results[reviewer["agent"]] = reviewer
@@ -791,19 +805,23 @@ def cross_review(args, prompt):
             try:
                 results[name] = future.result()
             except Exception as exc:  # Preserve evidence instead of hiding worker failures.
+                timeout, timeout_source = _effective_timeout_details(
+                    name, args.timeout, args.review_profile)
                 results[name] = {
                     "agent": name, "family": AGENTS[name]["family"],
                     "success": False, "status": "failed",
-                    "timeout_seconds": _effective_timeout(
-                        name, args.timeout, args.review_profile),
+                    "timeout_seconds": timeout,
+                    "timeout_source": timeout_source,
                     "duration_seconds": 0.0, "error": str(exc),
                 }
         else:
+            timeout, timeout_source = _effective_timeout_details(
+                name, args.timeout, args.review_profile)
             results[name] = {
                 "agent": name, "family": AGENTS[name]["family"],
                 "success": False, "status": "cancelled",
-                "timeout_seconds": _effective_timeout(
-                    name, args.timeout, args.review_profile),
+                "timeout_seconds": timeout,
+                "timeout_source": timeout_source,
                 "duration_seconds": 0.0,
                 "error": "review terminated before completion",
             }
