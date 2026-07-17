@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
   | bash -s -- --codex
 ```
 
-当前 stable release 为 `v0.8.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
+当前 stable release 为 `v0.8.1`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
 
 如果 `~/.local/bin` 不在 `PATH`，安装器会给出提示；加入后可在任意目录运行 `dev-workflow`。装完**重启 Codex 或新开会话**。加 `--install-deps` 会一并安装可脚本化的伴侣 skill：
 
@@ -256,7 +256,7 @@ python3 <plugin-root>/scripts/external_agent.py \
   --PROMPT '只报告有证据的问题'
 ```
 
-`--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`。`--list` 同时显示 family、`health_status`、`routing_priority` 和 `recommended_timeout_seconds`；首次超时标记为 `slow` 并提高建议值，当前存在失败 streak 就降为 `deprioritized`，连续两次失败升级为 `degraded`，恢复成功后保留 `slow` 历史。`--cross-review auto --orchestrator-family openai` 会确定性选择已安装、更健康、且不同家族的 reviewer，并排除主流程家族；不足两个合格家族时返回结构化失败。`--cross-review` 并行调用 reviewer：standard 仍要求双家族 quorum；`small-fix` 显式使用 90 秒默认预算，一个 reviewer 成功时保留 `quorum=false` 并输出 `outcome=degraded`。standard 的 provider 建议超时在未显式传 `--timeout` 时最多为 600 秒，显式 timeout 可覆盖上限。
+`--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`。`--list` 同时显示 family、`health_status`、`routing_priority` 和 `recommended_timeout_seconds`；首次超时标记为 `slow` 并提高建议值，当前存在失败 streak 就降为 `deprioritized`，连续两次失败升级为 `degraded`，恢复成功后保留 `slow` 历史。`--cross-review auto --orchestrator-family openai` 会确定性选择已安装、更健康、且不同家族的 reviewer，并排除主流程家族；实际 provider 家族未知的 `opencode` 不会在 auto 模式中冒充独立家族。不足两个合格家族时返回结构化失败。`--cross-review` 并行调用 reviewer：standard 仍要求双家族 quorum；`small-fix` 显式使用 90 秒默认预算，一个 reviewer 成功时保留 `quorum=false` 并输出 `outcome=degraded`。standard 的 provider 建议超时在未显式传 `--timeout` 时最多为 600 秒，显式 timeout 可覆盖上限。
 
 `--progress jsonl` 默认把 `cross_review_started`、`review_started`、`review_finished`、`policy_satisfied`、`cross_review_terminated` 和 `cross_review_finished` 实时写到 stderr；stdout 只保留最终 JSON/文本，因此可继续重定向为完成证据。进度事件不改变 quorum 或降级规则。失败、取消和用户终止也输出带 reviewer status/耗时的机器可读证据；用户要求停止时立即终止，保存 `outcome=terminated` 证据，不继续后续 review 门禁。完成门只接受 24 小时内且仍匹配当前仓库的报告。`--context git` 会发送当前 staged/unstaged diff；不要包含密钥、`.env`、完整敏感 payload 或无关私有文件。
 
