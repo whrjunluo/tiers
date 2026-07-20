@@ -62,7 +62,7 @@ description: Use when a development task could change code, behavior, configurat
 
 显式判级后，按以下短契约执行，后文只解释细节：
 
-1. 先用 controller 执行 `init` 与 `check`；若存在同目标未完成状态则续行，已封存任务用 `start <task> <level>`，Goal 只用 `continue-goal`。
+1. 先用 controller 执行 `init` 与 `check`；若存在同目标未完成状态则续行，已封存或 empty slot 用 `start <task> <level>`，Goal 只用 `continue-goal`。需要切换任务时，合法顺序固定为 `suspend <key>` → `start <task> <level>` → 当前任务封存后 `resume <key>`；禁止伪造 complete 或手换 YAML。
 2. L0–L3 必须通过 controller 设置 `task`、`level`、`context.target`、`context.sources`，写入对应理解证据并执行 `understand <evidence>`。`understand` 返回 PASS 之前，禁止任何文件修改，包括测试、spec 和 plan。
 3. 需要 TDD 时，`set phase tdd` 成功之前，禁止新增或修改测试；实现、review 和 complete 也必须继续使用同一个 controller。
 4. controller 不可用、路径无法确认或硬门失败时，输出 BLOCKED/降级原因并停下，不得改用工作区内同名脚本绕过。
@@ -437,6 +437,8 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 
 **状态文件：** 每个项目按需生成 `docs/superpowers/.workflow-state.yaml`（自动加入 `.gitignore`）。L0/L1 必须维护；auth / route guard / API integration / order / IM / prescription / payment / 数据写入 / 权限等高风险 L2/L3 也必须维护。其他短 L2–L4 可跳过。
 
+**暂存目录：** unfinished task 只能通过 `workflow-state.sh suspend <key>` 停放到 `docs/superpowers/.workflow-suspended/<key>.yaml` + `<key>.meta`；该目录自动忽略，metadata 绑定当前 repository 并校验 state SHA-256。`resume <key>` 只在 active slot 为 absent/完整空模板或 valid sealed state 时恢复，成功安装并核对 active state 后才删除快照。unsafe key、partial pair、tamper、wrong repo、symlink escape 或另一个 unfinished active task 都必须 fail closed。
+
 **证据目录：** `docs/superpowers/.workflow-evidence/`（自动加入 `.gitignore`）。所有 `evidence.*` 必须使用该目录内的仓库相对路径，绝对路径与 `..` 会被完成门拒绝。只存测试输出、Network 方法/URL/状态码摘要、codegraph 报告、评审 JSON 和残余风险；禁止写 token、密码、完整敏感 payload。最低格式：tests 含 `command:` + `exit_code: 0`；business/fidelity 的 `result:` 必须有且仅有一行，内容为 `result: PASS`；requests 同样必须且只能含一行 `result: PASS`，并含 `method:` + `url:` + 三位 `status:`（状态码可以是被验证路径所预期的 2xx/4xx/5xx）；codegraph 含 `result:` 或 `degraded:`；residual_risks 含 `risk:`。任何冲突或失败结果都不得进入 `done`。
 
 **格式**（字段结构刻意设计成将来脚本可直接接管）：
@@ -483,7 +485,7 @@ next: 下一步具体该做什么
 ```
 
 **维护约定：**
-1. **开工时**：跑 `<plugin-root>/scripts/workflow-state.sh check`。如果输出「无续行状态」，直接继续判级；如果已有状态，再 `get phase` / `get task` / `get next`。若 phase != done 且非空，提示续行：「检测到未完成的 {level} 任务【{task}】，停在 {phase}，下一步 {next}。继续，还是换新任务？」若已 done，状态不可再 `set` 或重复 `complete`；用 `workflow-state.sh start <task> <level>` 显式开始下一任务。
+1. **开工时**：跑 `<plugin-root>/scripts/workflow-state.sh check`。如果输出「无续行状态」，直接继续判级；如果已有状态，再 `get phase` / `get task` / `get next`。若 phase != done 且非空，提示续行：「检测到未完成的 {level} 任务【{task}】，停在 {phase}，下一步 {next}。继续，还是换新任务？」若用户明确要切换任务，先 `workflow-state.sh suspend <key>`，再从 empty slot `start <task> <level>`；不得覆盖 unfinished state。若已 done，状态不可再 `set` 或重复 `complete`，直接用 `start`。恢复 parked task 使用 `resume <key>`，且 active slot 必须 empty 或 valid sealed。
 2. **定级后**：L0/L1 或高风险 L2/L3 跑 `workflow-state.sh init`（旧 schema 会自动迁移，repo/branch 自动填充），再设置 task、level、phase、context.target、context.sources、context.environment、context.delivery。
    > L1 阶段流转：`brainstorm` →（理解度关卡）→ 理解不足则 `set phase grill`、收敛后再 `set phase spec`；自评足够且用户点头可直接 `set phase spec`。禁止 brainstorm 不经关卡判定直接跳 spec。
 3. **声明关卡**：业务闭环设置 `requirements.business=true`，脚本会强制同时满足 `requirements.external_review=true`；其他触发外部评审的任务也设置 `requirements.external_review=true`；设计保真设置 `requirements.fidelity=true`。

@@ -136,6 +136,37 @@ expect_fail(){
   local msg="$1"; shift
   if "$@" >/dev/null 2>&1; then fail "$msg"; fi
 }
+active_state(){ printf '%s\n' "$1/docs/superpowers/.workflow-state.yaml"; }
+snapshot_yaml(){ printf '%s\n' "$1/docs/superpowers/.workflow-suspended/$2.yaml"; }
+snapshot_meta(){ printf '%s\n' "$1/docs/superpowers/.workflow-suspended/$2.meta"; }
+sha256_file(){
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+unfinished_repo(){
+  local repo
+  repo="$(new_repo "$1")"
+  setf "$repo" task "$2"
+  setf "$repo" level L1
+  setf "$repo" phase spec
+  setf "$repo" context.target scripts/workflow-state.sh
+  setf "$repo" context.sources approved-spec
+  printf '%s\n' "$repo"
+}
+seal_active_l4(){
+  local repo="$1"
+  setf "$repo" context.target scripts/workflow-state.sh
+  setf "$repo" context.sources test-seal
+  setf "$repo" context.environment n/a
+  setf "$repo" context.delivery local-only
+  setf "$repo" phase review
+  setf "$repo" evidence.tests "$(evidence "$repo" tests.txt $'command: bash tests/workflow-state.sh\nexit_code: 0')"
+  setf "$repo" evidence.residual_risks "$(evidence "$repo" risks.txt 'risk: none')"
+  bash "$WS" --repo "$repo" complete >/dev/null
+}
 
 # check should be harmless before init; a new repo simply has no resumable state.
 EMPTY="$ROOT/empty"
@@ -464,6 +495,212 @@ bash "$WS" --repo "$STANDARD" start next-standard L2 >/dev/null
 [ "$(getf "$STANDARD" task)" = next-standard ] || fail "start 应开启新任务"
 [ "$(getf "$STANDARD" phase)" = brainstorm ] || fail "start 应从 brainstorm 开始"
 
+# Unfinished tasks can be parked and restored byte-for-byte.
+SUSPEND_ROUNDTRIP="$(unfinished_repo suspend-roundtrip original-task)"
+cp "$(active_state "$SUSPEND_ROUNDTRIP")" "$ROOT/original-state.yaml"
+bash "$WS" --repo "$SUSPEND_ROUNDTRIP" suspend original >/dev/null
+[ ! -e "$(active_state "$SUSPEND_ROUNDTRIP")" ] || fail "suspend 成功后 active state 应移除"
+[ -f "$(snapshot_yaml "$SUSPEND_ROUNDTRIP" original)" ] || fail "suspend 应创建 YAML snapshot"
+[ -f "$(snapshot_meta "$SUSPEND_ROUNDTRIP" original)" ] || fail "suspend 应创建 metadata sidecar"
+grep -qxF 'docs/superpowers/.workflow-suspended/' "$SUSPEND_ROUNDTRIP/.gitignore" || fail "suspend 应添加精确 ignore"
+bash "$WS" --repo "$SUSPEND_ROUNDTRIP" resume original >/dev/null
+cmp -s "$ROOT/original-state.yaml" "$(active_state "$SUSPEND_ROUNDTRIP")" || fail "resume 应逐字节恢复原 state"
+[ ! -e "$(snapshot_yaml "$SUSPEND_ROUNDTRIP" original)" ] || fail "resume 成功后应删除 YAML snapshot"
+[ ! -e "$(snapshot_meta "$SUSPEND_ROUNDTRIP" original)" ] || fail "resume 成功后应删除 metadata sidecar"
+
+# start accepts an absent or completely empty initialized active slot.
+START_EMPTY="$(unfinished_repo start-empty parked-task)"
+bash "$WS" --repo "$START_EMPTY" suspend parked >/dev/null
+bash "$WS" --repo "$START_EMPTY" start next-task L2 >/dev/null
+[ "$(getf "$START_EMPTY" task)" = next-task ] || fail "start 应从 absent slot 初始化新任务"
+[ "$(getf "$START_EMPTY" phase)" = brainstorm ] || fail "empty-slot start 应从 brainstorm 开始"
+INITIALIZED_EMPTY="$(new_repo initialized-empty)"
+bash "$WS" --repo "$INITIALIZED_EMPTY" start initialized-task L4 >/dev/null
+[ "$(getf "$INITIALIZED_EMPTY" task)" = initialized-task ] || fail "start 应接受完整空模板"
+
+# resume accepts an empty template or a valid sealed intervening task.
+RESUME_EMPTY="$(unfinished_repo resume-empty original-empty-task)"
+bash "$WS" --repo "$RESUME_EMPTY" suspend parked >/dev/null
+bash "$WS" --repo "$RESUME_EMPTY" init >/dev/null
+bash "$WS" --repo "$RESUME_EMPTY" resume parked >/dev/null
+[ "$(getf "$RESUME_EMPTY" task)" = original-empty-task ] || fail "resume 应接受 init 重建的空模板"
+
+RESUME_SEALED="$(unfinished_repo resume-sealed original-sealed-task)"
+bash "$WS" --repo "$RESUME_SEALED" suspend parked >/dev/null
+bash "$WS" --repo "$RESUME_SEALED" start intervening L4 >/dev/null
+seal_active_l4 "$RESUME_SEALED"
+bash "$WS" --repo "$RESUME_SEALED" resume parked >/dev/null
+[ "$(getf "$RESUME_SEALED" task)" = original-sealed-task ] || fail "resume 应替换 valid sealed task"
+[ "$(getf "$RESUME_SEALED" phase)" = spec ] || fail "resume 应保留原 phase"
+
+# Another unfinished active task protects the slot from start and resume.
+ACTIVE_PROTECTION="$(unfinished_repo active-protection parked-owner)"
+bash "$WS" --repo "$ACTIVE_PROTECTION" suspend parked >/dev/null
+bash "$WS" --repo "$ACTIVE_PROTECTION" start active-owner L2 >/dev/null
+cp "$(active_state "$ACTIVE_PROTECTION")" "$ROOT/active-owner.yaml"
+expect_fail "unfinished active slot 不得 start 覆盖" bash "$WS" --repo "$ACTIVE_PROTECTION" start overwrite L2
+expect_fail "unfinished active slot 不得 resume 覆盖" bash "$WS" --repo "$ACTIVE_PROTECTION" resume parked
+cmp -s "$ROOT/active-owner.yaml" "$(active_state "$ACTIVE_PROTECTION")" || fail "失败的 start/resume 不得修改 active state"
+[ -f "$(snapshot_yaml "$ACTIVE_PROTECTION" parked)" ] || fail "失败的 resume 不得删除 snapshot"
+
+# Partially populated templates are malformed rather than empty.
+PARTIAL_SLOT="$(new_repo partial-slot)"
+setf "$PARTIAL_SLOT" task partial-only
+cp "$(active_state "$PARTIAL_SLOT")" "$ROOT/partial-slot.yaml"
+expect_fail "partial template 不得被 start 当作 empty" bash "$WS" --repo "$PARTIAL_SLOT" start replacement L2
+cmp -s "$ROOT/partial-slot.yaml" "$(active_state "$PARTIAL_SLOT")" || fail "失败的 partial-slot start 不得改 state"
+
+PARTIAL_RESUME="$(unfinished_repo partial-resume parked-partial)"
+bash "$WS" --repo "$PARTIAL_RESUME" suspend parked >/dev/null
+bash "$WS" --repo "$PARTIAL_RESUME" init >/dev/null
+setf "$PARTIAL_RESUME" task partial-only
+expect_fail "partial template 不得被 resume 当作 empty" bash "$WS" --repo "$PARTIAL_RESUME" resume parked
+[ -f "$(snapshot_yaml "$PARTIAL_RESUME" parked)" ] || fail "partial-slot resume 失败应保留 snapshot"
+
+# suspend rejects empty/sealed states and unsafe or duplicate keys before mutation.
+EMPTY_SUSPEND="$(new_repo empty-suspend)"
+expect_fail "empty state 不得 suspend" bash "$WS" --repo "$EMPTY_SUSPEND" suspend empty
+bash "$WS" --repo "$EMPTY_SUSPEND" start sealed-task L4 >/dev/null
+seal_active_l4 "$EMPTY_SUSPEND"
+expect_fail "sealed state 不得 suspend" bash "$WS" --repo "$EMPTY_SUSPEND" suspend sealed
+
+UNSAFE_KEYS="$(unfinished_repo unsafe-keys unsafe-owner)"
+cp "$(active_state "$UNSAFE_KEYS")" "$ROOT/unsafe-owner.yaml"
+for key in '' A upperCase ../escape 'a/b' 'a\b' '.hidden' 'a b' 'a;rm' "$(printf 'a%.0s' {1..65})"; do
+  expect_fail "unsafe suspend key 应拒绝: $key" bash "$WS" --repo "$UNSAFE_KEYS" suspend "$key"
+  cmp -s "$ROOT/unsafe-owner.yaml" "$(active_state "$UNSAFE_KEYS")" || fail "unsafe key 不得修改 active state: $key"
+done
+
+DUPLICATE_KEY="$(unfinished_repo duplicate-key original-owner)"
+bash "$WS" --repo "$DUPLICATE_KEY" suspend duplicate >/dev/null
+bash "$WS" --repo "$DUPLICATE_KEY" start current-owner L2 >/dev/null
+cp "$(active_state "$DUPLICATE_KEY")" "$ROOT/duplicate-active.yaml"
+expect_fail "existing snapshot pair 不得覆盖" bash "$WS" --repo "$DUPLICATE_KEY" suspend duplicate
+cmp -s "$ROOT/duplicate-active.yaml" "$(active_state "$DUPLICATE_KEY")" || fail "duplicate suspend 不得修改 active state"
+
+for partial in yaml meta; do
+  PARTIAL_PAIR="$(unfinished_repo "partial-pair-$partial" partial-owner)"
+  mkdir -p "$PARTIAL_PAIR/docs/superpowers/.workflow-suspended"
+  : > "$PARTIAL_PAIR/docs/superpowers/.workflow-suspended/blocked.$partial"
+  cp "$(active_state "$PARTIAL_PAIR")" "$ROOT/partial-pair-$partial.yaml"
+  expect_fail "partial snapshot pair 应阻止 key reuse: $partial" bash "$WS" --repo "$PARTIAL_PAIR" suspend blocked
+  cmp -s "$ROOT/partial-pair-$partial.yaml" "$(active_state "$PARTIAL_PAIR")" || fail "partial pair 不得造成 active-state loss: $partial"
+done
+
+# Tampering, missing sidecars, wrong repositories, and symlinks fail closed.
+TAMPER_YAML="$(unfinished_repo tamper-yaml tamper-owner)"
+bash "$WS" --repo "$TAMPER_YAML" suspend parked >/dev/null
+bash "$WS" --repo "$TAMPER_YAML" init >/dev/null
+printf '\n# tampered\n' >> "$(snapshot_yaml "$TAMPER_YAML" parked)"
+cp "$(active_state "$TAMPER_YAML")" "$ROOT/tamper-empty.yaml"
+expect_fail "tampered snapshot YAML 不得 resume" bash "$WS" --repo "$TAMPER_YAML" resume parked
+cmp -s "$ROOT/tamper-empty.yaml" "$(active_state "$TAMPER_YAML")" || fail "tampered YAML 不得替换 active slot"
+
+TAMPER_META="$(unfinished_repo tamper-meta tamper-meta-owner)"
+bash "$WS" --repo "$TAMPER_META" suspend parked >/dev/null
+bash "$WS" --repo "$TAMPER_META" init >/dev/null
+printf 'unknown: value\n' >> "$(snapshot_meta "$TAMPER_META" parked)"
+expect_fail "tampered metadata 不得 resume" bash "$WS" --repo "$TAMPER_META" resume parked
+
+for missing in yaml meta; do
+  MISSING_PAIR="$(unfinished_repo "missing-$missing" missing-owner)"
+  bash "$WS" --repo "$MISSING_PAIR" suspend parked >/dev/null
+  rm -f "$MISSING_PAIR/docs/superpowers/.workflow-suspended/parked.$missing"
+  bash "$WS" --repo "$MISSING_PAIR" init >/dev/null
+  expect_fail "missing snapshot sidecar 应拒绝: $missing" bash "$WS" --repo "$MISSING_PAIR" resume parked
+done
+
+WRONG_REPO_SOURCE="$(unfinished_repo wrong-repo-source source-owner)"
+bash "$WS" --repo "$WRONG_REPO_SOURCE" suspend parked >/dev/null
+WRONG_REPO_TARGET="$(new_repo wrong-repo-target)"
+mkdir -p "$WRONG_REPO_TARGET/docs/superpowers/.workflow-suspended"
+cp "$(snapshot_yaml "$WRONG_REPO_SOURCE" parked)" "$(snapshot_yaml "$WRONG_REPO_TARGET" parked)"
+cp "$(snapshot_meta "$WRONG_REPO_SOURCE" parked)" "$(snapshot_meta "$WRONG_REPO_TARGET" parked)"
+expect_fail "copied snapshot 不得跨 repository resume" bash "$WS" --repo "$WRONG_REPO_TARGET" resume parked
+
+SYMLINK_FILE="$(unfinished_repo symlink-file symlink-owner)"
+bash "$WS" --repo "$SYMLINK_FILE" suspend parked >/dev/null
+cp "$(snapshot_yaml "$SYMLINK_FILE" parked)" "$ROOT/symlink-target.yaml"
+rm "$(snapshot_yaml "$SYMLINK_FILE" parked)"
+ln -s "$ROOT/symlink-target.yaml" "$(snapshot_yaml "$SYMLINK_FILE" parked)"
+bash "$WS" --repo "$SYMLINK_FILE" init >/dev/null
+expect_fail "symlinked snapshot file 不得 resume" bash "$WS" --repo "$SYMLINK_FILE" resume parked
+
+SYMLINK_META="$(unfinished_repo symlink-meta symlink-meta-owner)"
+bash "$WS" --repo "$SYMLINK_META" suspend parked >/dev/null
+cp "$(snapshot_meta "$SYMLINK_META" parked)" "$ROOT/symlink-target.meta"
+rm "$(snapshot_meta "$SYMLINK_META" parked)"
+ln -s "$ROOT/symlink-target.meta" "$(snapshot_meta "$SYMLINK_META" parked)"
+bash "$WS" --repo "$SYMLINK_META" init >/dev/null
+expect_fail "symlinked metadata file 不得 resume" bash "$WS" --repo "$SYMLINK_META" resume parked
+
+SYMLINK_DIR="$(unfinished_repo symlink-dir symlink-dir-owner)"
+mkdir -p "$ROOT/outside-snapshots"
+ln -s "$ROOT/outside-snapshots" "$SYMLINK_DIR/docs/superpowers/.workflow-suspended"
+cp "$(active_state "$SYMLINK_DIR")" "$ROOT/symlink-dir-active.yaml"
+expect_fail "symlinked snapshot directory 不得 suspend" bash "$WS" --repo "$SYMLINK_DIR" suspend parked
+cmp -s "$ROOT/symlink-dir-active.yaml" "$(active_state "$SYMLINK_DIR")" || fail "symlink dir rejection 不得丢 active state"
+
+RESUME_SYMLINK_DIR="$(unfinished_repo resume-symlink-dir resume-symlink-owner)"
+bash "$WS" --repo "$RESUME_SYMLINK_DIR" suspend parked >/dev/null
+mv "$RESUME_SYMLINK_DIR/docs/superpowers/.workflow-suspended" "$ROOT/real-resume-snapshots"
+ln -s "$ROOT/real-resume-snapshots" "$RESUME_SYMLINK_DIR/docs/superpowers/.workflow-suspended"
+bash "$WS" --repo "$RESUME_SYMLINK_DIR" init >/dev/null
+cp "$(active_state "$RESUME_SYMLINK_DIR")" "$ROOT/resume-symlink-empty.yaml"
+expect_fail "symlinked snapshot directory 不得 resume" bash "$WS" --repo "$RESUME_SYMLINK_DIR" resume parked
+cmp -s "$ROOT/resume-symlink-empty.yaml" "$(active_state "$RESUME_SYMLINK_DIR")" || fail "resume symlink dir rejection 不得修改 active slot"
+
+SYMLINK_IGNORE="$(unfinished_repo symlink-ignore symlink-ignore-owner)"
+printf '%s\n' '# outside ignore' > "$ROOT/outside-gitignore"
+rm -f "$SYMLINK_IGNORE/.gitignore"
+ln -s "$ROOT/outside-gitignore" "$SYMLINK_IGNORE/.gitignore"
+cp "$(active_state "$SYMLINK_IGNORE")" "$ROOT/symlink-ignore-active.yaml"
+expect_fail "symlinked .gitignore 不得被 suspend 写入" bash "$WS" --repo "$SYMLINK_IGNORE" suspend parked
+cmp -s "$ROOT/symlink-ignore-active.yaml" "$(active_state "$SYMLINK_IGNORE")" || fail ".gitignore symlink rejection 不得丢 active state"
+[ "$(cat "$ROOT/outside-gitignore")" = '# outside ignore' ] || fail "suspend 不得写入 symlinked .gitignore target"
+
+# The shared controller lock serializes concurrent suspend attempts for one key.
+CONCURRENT_SUSPEND="$(unfinished_repo concurrent-suspend concurrent-owner)"
+set +e
+bash "$WS" --repo "$CONCURRENT_SUSPEND" suspend same-key >"$ROOT/concurrent-suspend-1.out" 2>"$ROOT/concurrent-suspend-1.err" &
+concurrent_pid_1=$!
+bash "$WS" --repo "$CONCURRENT_SUSPEND" suspend same-key >"$ROOT/concurrent-suspend-2.out" 2>"$ROOT/concurrent-suspend-2.err" &
+concurrent_pid_2=$!
+wait "$concurrent_pid_1"; concurrent_rc_1=$?
+wait "$concurrent_pid_2"; concurrent_rc_2=$?
+set -e
+if [ "$concurrent_rc_1" -eq 0 ]; then
+  [ "$concurrent_rc_2" -ne 0 ] || fail "concurrent suspend 应只有一个成功"
+else
+  [ "$concurrent_rc_2" -eq 0 ] || fail "concurrent suspend 应至少一个成功"
+fi
+[ ! -e "$(active_state "$CONCURRENT_SUSPEND")" ] || fail "成功的 concurrent suspend 应清空 active slot"
+[ -f "$(snapshot_yaml "$CONCURRENT_SUSPEND" same-key)" ] && [ -f "$(snapshot_meta "$CONCURRENT_SUSPEND" same-key)" ] || fail "concurrent suspend 应留下一个完整 pair"
+
+# A completed snapshot is not a rollback archive, even if metadata is rehashed.
+COMPLETED_SNAPSHOT="$(unfinished_repo completed-snapshot original-owner)"
+bash "$WS" --repo "$COMPLETED_SNAPSHOT" suspend parked >/dev/null
+bash "$WS" --repo "$COMPLETED_SNAPSHOT" start completed-owner L4 >/dev/null
+seal_active_l4 "$COMPLETED_SNAPSHOT"
+cp "$(active_state "$COMPLETED_SNAPSHOT")" "$(snapshot_yaml "$COMPLETED_SNAPSHOT" parked)"
+completed_sha="$(sha256_file "$(snapshot_yaml "$COMPLETED_SNAPSHOT" parked)")"
+python3 - "$(snapshot_meta "$COMPLETED_SNAPSHOT" parked)" "$completed_sha" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+path.write_text(re.sub(r"^state_sha256: .*?$", "state_sha256: " + sys.argv[2], text, flags=re.M), encoding="utf-8")
+PY
+rm "$(active_state "$COMPLETED_SNAPSHOT")"
+bash "$WS" --repo "$COMPLETED_SNAPSHOT" init >/dev/null
+expect_fail "completed snapshot 不得 resume" bash "$WS" --repo "$COMPLETED_SNAPSHOT" resume parked
+
+# Ignore management is idempotent across repeated suspend/resume cycles.
+IGNORE_IDEMPOTENT="$(unfinished_repo ignore-idempotent ignore-owner)"
+bash "$WS" --repo "$IGNORE_IDEMPOTENT" suspend first >/dev/null
+bash "$WS" --repo "$IGNORE_IDEMPOTENT" resume first >/dev/null
+bash "$WS" --repo "$IGNORE_IDEMPOTENT" suspend second >/dev/null
+[ "$(grep -c '^docs/superpowers/\.workflow-suspended/$' "$IGNORE_IDEMPOTENT/.gitignore")" -eq 1 ] || fail "snapshot ignore entry 不得重复"
+
 # Degraded one-reviewer evidence is explicit opt-in for small-fix only.
 STANDARD_DEGRADED="$(understanding_repo standard-degraded L2)"
 setf "$STANDARD_DEGRADED" context.environment n/a
@@ -609,6 +846,9 @@ grep -q 'external-cross-review.*same-model-fresh-context.*built-in-checklist' "$
 grep -q '删除数据.*强制推送.*发布.*部署.*付费.*凭证' "$SKILL" || fail "dev-workflow 应声明不可自治边界"
 grep -q '不得.*用户已确认' "$SKILL" || fail "dev-workflow 应禁止伪称用户确认"
 grep -q 'workflow-state.sh confirm' "$SKILL" || fail "dev-workflow 应说明 confirmation 命令"
+grep -q 'suspend <key>' "$SKILL" || fail "dev-workflow 应说明 suspend 命令"
+grep -q 'resume <key>' "$SKILL" || fail "dev-workflow 应说明 resume 命令"
+grep -q 'suspend.*start.*resume' "$SKILL" || fail "dev-workflow 应说明合法任务切换顺序"
 grep -q 'SELF_HOSTING_CONTROLLER' "$SKILL" || fail "dev-workflow 应前置自举 controller 规则"
 grep -q 'understand.*之前.*禁止.*文件修改' "$SKILL" || fail "dev-workflow 应前置 understanding 写入硬门"
 grep -q 'set phase tdd.*之前.*测试' "$SKILL" || fail "dev-workflow 应前置 TDD phase 硬门"
@@ -618,4 +858,7 @@ grep -q 'checkpoint commit' "$SKILL" || fail "dev-workflow 应说明 business ve
 grep -q '状态变化' "$SKILL" || fail "dev-workflow 应禁止无信息固定频率状态刷屏"
 if grep -q '仅 L0/L1 需要维护' "$SKILL"; then fail "高风险 L2/L3 不得跳过状态机"; fi
 if grep -q 'L2–L4 太短，可跳过' "$SKILL"; then fail "高风险 L2/L3 不得被短任务豁免"; fi
+grep -q 'workflow-state.sh suspend' "$HERE/README.md" || fail "README 应说明 suspend 命令"
+grep -q 'workflow-state.sh resume' "$HERE/README.md" || fail "README 应说明 resume 命令"
+grep -qxF 'docs/superpowers/.workflow-suspended/' "$HERE/.gitignore" || fail "仓库应忽略 suspended snapshots"
 echo "PASS tests/workflow-state.sh"

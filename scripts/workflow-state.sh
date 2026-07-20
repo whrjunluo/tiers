@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
-# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
+# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
 set -euo pipefail
 # 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -8,6 +8,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 REPO="$PWD"
 if [ "${1:-}" = "--repo" ]; then REPO="$2"; shift 2; fi
 STATE="$REPO/docs/superpowers/.workflow-state.yaml"
+SUSPENDED_DIR="$REPO/docs/superpowers/.workflow-suspended"
+SNAPSHOT_FORMAT="workflow-snapshot/v1"
 STATE_LOCK_ROOT="${DEV_WORKFLOW_STATE_LOCK_ROOT:-${TMPDIR:-/tmp}/dev-workflow-state-${UID}}"
 STATE_LOCK_ID="$(printf '%s' "$STATE" | cksum | awk '{print $1 "-" $2}')"
 STATE_LOCK="$STATE_LOCK_ROOT/$STATE_LOCK_ID.lock"
@@ -22,6 +24,9 @@ VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
 VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
 VALID_CONFIRMATION_STATUSES="pending passed blocked"
 VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.checkpoint requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
+SNAPSHOT_TMP_YAML=""
+SNAPSHOT_TMP_META=""
+ACTIVE_TMP=""
 
 die(){ echo "✗ $1" >&2; exit 1; }
 in_list(){ printf '%s\n' $2 | grep -qxF "$1"; }
@@ -29,6 +34,9 @@ is_empty_value(){ [ -z "$1" ] || [ "$1" = '""' ] || [ "$1" = "''" ]; }
 
 release_state_lock(){
   local owner=""
+  [ -z "${SNAPSHOT_TMP_YAML:-}" ] || rm -f "$SNAPSHOT_TMP_YAML"
+  [ -z "${SNAPSHOT_TMP_META:-}" ] || rm -f "$SNAPSHOT_TMP_META"
+  [ -z "${ACTIVE_TMP:-}" ] || rm -f "$ACTIVE_TMP"
   [ -f "$STATE_LOCK/owner" ] && owner="$(awk 'NR==1{print;exit}' "$STATE_LOCK/owner" 2>/dev/null || true)"
   if [ "$owner" = "$$" ]; then
     rm -f "$STATE_LOCK/owner"
@@ -64,8 +72,8 @@ decode_yaml_scalar(){
   printf '%s\n' "$value"
 }
 
-yget(){ # top-level or one-level section.key value extraction
-  local k="$1" raw
+yget_file(){ # top-level or one-level section.key value extraction from an explicit file
+  local file="$1" k="$2" raw
   case "$k" in
     *.*)
       local section="${k%%.*}" key="${k#*.}"
@@ -77,17 +85,19 @@ yget(){ # top-level or one-level section.key value extraction
           if(substr($0,1,1)!=sprintf("%c",39)) sub(/[[:space:]]+#.*$/,"")
           print;exit
         }
-      ' "$STATE")" ;;
+      ' "$file")" ;;
     *) raw="$(awk -v k="$k" '
       $1==k":"{
         sub(/^[^:]+:[[:space:]]*/,"")
         if(substr($0,1,1)!=sprintf("%c",39)) sub(/[[:space:]]+#.*$/,"")
         print;exit
       }
-    ' "$STATE")" ;;
+    ' "$file")" ;;
   esac
   decode_yaml_scalar "$raw"
 }
+
+yget(){ yget_file "$STATE" "$1"; }
 
 encode_yaml_scalar(){
   local field="$1" value="$2"
@@ -282,6 +292,214 @@ PY
 
 text_sha256(){
   printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
+canonical_repo_root(){
+  local root
+  root="$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$REPO")"
+  (cd "$root" 2>/dev/null && pwd -P) || die "无法解析 repository 路径: $root"
+}
+
+repository_sha256(){ text_sha256 "$(canonical_repo_root)"; }
+
+validate_snapshot_key(){
+  local key="${1:-}"
+  [ ${#key} -ge 1 ] && [ ${#key} -le 64 ] || die "snapshot key 长度必须为 1-64: ${key:-空}"
+  printf '%s\n' "$key" | grep -Eq '^[a-z0-9][a-z0-9_-]*$' || die "snapshot key 非法: $key"
+}
+
+snapshot_path(){
+  local key="$1" suffix="$2"
+  printf '%s/%s.%s\n' "$SUSPENDED_DIR" "$key" "$suffix"
+}
+
+assert_snapshot_directory_safe(){
+  local create="${1:-false}" repo_root parent parent_resolved resolved
+  repo_root="$(canonical_repo_root)"
+  parent="$(dirname "$SUSPENDED_DIR")"
+  [ -d "$parent" ] || die "workflow state 目录不存在: $parent"
+  parent_resolved="$(cd "$parent" && pwd -P)" || die "无法解析 snapshot parent: $parent"
+  case "$parent_resolved/" in
+    "$repo_root/"*) ;;
+    *) die "snapshot parent 越过 repository: $parent_resolved" ;;
+  esac
+  [ ! -L "$SUSPENDED_DIR" ] || die "snapshot directory 不得为 symlink: $SUSPENDED_DIR"
+  if [ "$create" = true ]; then
+    mkdir -p "$SUSPENDED_DIR"
+  else
+    [ -d "$SUSPENDED_DIR" ] || die "snapshot directory 不存在: $SUSPENDED_DIR"
+  fi
+  resolved="$(cd "$SUSPENDED_DIR" && pwd -P)" || die "无法解析 snapshot directory: $SUSPENDED_DIR"
+  case "$resolved/" in
+    "$repo_root/"*) ;;
+    *) die "snapshot directory 越过 repository: $resolved" ;;
+  esac
+}
+
+assert_regular_snapshot_file(){
+  local path="$1" label="$2"
+  [ -f "$path" ] && [ ! -L "$path" ] || die "$label 必须是 regular file: $path"
+}
+
+ensure_snapshot_ignore(){
+  local ignore_file="$(canonical_repo_root)/.gitignore" entry="docs/superpowers/.workflow-suspended/"
+  [ ! -L "$ignore_file" ] || die ".gitignore 不得为 symlink: $ignore_file"
+  if [ -f "$ignore_file" ] && grep -qxF "$entry" "$ignore_file"; then
+    return
+  fi
+  if [ -s "$ignore_file" ]; then
+    printf '\n%s\n' "$entry" >> "$ignore_file"
+  else
+    printf '%s\n' "$entry" > "$ignore_file"
+  fi
+}
+
+state_structure_valid(){
+  local file="$1" value
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  value="$(yget_file "$file" phase)"; is_empty_value "$value" || in_list "$value" "$VALID_PHASES" || return 1
+  value="$(yget_file "$file" level)"; is_empty_value "$value" || in_list "$value" "$VALID_LEVELS" || return 1
+  value="$(yget_file "$file" context.environment)"; is_empty_value "$value" || in_list "$value" "$VALID_ENVIRONMENTS" || return 1
+  value="$(yget_file "$file" execution.mode)"; is_empty_value "$value" || in_list "$value" "single goal" || return 1
+  value="$(yget_file "$file" execution.profile)"; is_empty_value "$value" || in_list "$value" "$VALID_PROFILES" || return 1
+  value="$(yget_file "$file" execution.continuation)"; printf '%s\n' "$value" | grep -qE '^[0-9]+$' || return 1
+  for field in requirements.business requirements.fidelity requirements.external_review; do
+    value="$(yget_file "$file" "$field")"
+    is_empty_value "$value" || in_list "$value" "$VALID_BOOLEANS" || return 1
+  done
+  value="$(yget_file "$file" understanding.status)"; is_empty_value "$value" || in_list "$value" "$VALID_UNDERSTANDING_STATUSES" || return 1
+  value="$(yget_file "$file" understanding.kind)"; is_empty_value "$value" || in_list "$value" "$VALID_UNDERSTANDING_KINDS" || return 1
+  value="$(yget_file "$file" confirmation.status)"; is_empty_value "$value" || in_list "$value" "$VALID_CONFIRMATION_STATUSES" || return 1
+  return 0
+}
+
+state_is_empty_slot(){
+  local file="$1" field value
+  state_structure_valid "$file" || return 1
+  [ "$(yget_file "$file" context.repo)" = "$(canonical_repo_root)" ] || return 1
+  [ "$(yget_file "$file" execution.mode)" = single ] || return 1
+  [ "$(yget_file "$file" execution.profile)" = standard ] || return 1
+  [ "$(yget_file "$file" execution.continuation)" = 0 ] || return 1
+  [ "$(yget_file "$file" understanding.status)" = pending ] || return 1
+  [ "$(yget_file "$file" confirmation.status)" = pending ] || return 1
+  [ "$(yget_file "$file" completion.workflow_version)" = 2 ] || return 1
+  for field in task level phase context.target context.sources context.environment context.delivery \
+    execution.objective_sha256 execution.checkpoint understanding.kind understanding.evidence \
+    understanding.evidence_sha256 understanding.scope_sha256 understanding.objective_sha256 \
+    understanding.reused_kind understanding.reused_evidence understanding.reused_evidence_sha256 \
+    confirmation.mode confirmation.evidence confirmation.decision_sha256 artifacts.spec artifacts.plan \
+    evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review \
+    evidence.fidelity evidence.residual_risks completion.completed_at completion.repository_fingerprint \
+    completion.requirements_sha256 next; do
+    value="$(yget_file "$file" "$field")"
+    is_empty_value "$value" || return 1
+  done
+  for field in requirements.business requirements.fidelity requirements.external_review; do
+    [ "$(yget_file "$file" "$field")" = false ] || return 1
+  done
+  return 0
+}
+
+state_is_unfinished(){
+  local file="$1" phase level field
+  state_structure_valid "$file" || return 1
+  ! is_empty_value "$(yget_file "$file" task)" || return 1
+  level="$(yget_file "$file" level)"; in_list "$level" "$VALID_LEVELS" || return 1
+  phase="$(yget_file "$file" phase)"; in_list "$phase" "$VALID_PHASES" || return 1
+  [ "$phase" != done ] || return 1
+  [ "$(yget_file "$file" completion.workflow_version)" = 2 ] || return 1
+  for field in completion.completed_at completion.repository_fingerprint completion.requirements_sha256; do
+    is_empty_value "$(yget_file "$file" "$field")" || return 1
+  done
+  if is_execution_phase "$phase"; then
+    (
+      STATE="$file"
+      errors=""
+      validate_understanding_gate
+      validate_confirmation_gate
+      [ -z "$errors" ]
+    ) || return 1
+  fi
+  return 0
+}
+
+active_slot_kind(){
+  local sealed_at
+  if [ ! -e "$STATE" ] && [ ! -L "$STATE" ]; then
+    printf '%s\n' empty
+    return
+  fi
+  [ -f "$STATE" ] && [ ! -L "$STATE" ] || die "active workflow state 必须是 regular file: $STATE"
+  if state_is_empty_slot "$STATE"; then
+    printf '%s\n' empty
+    return
+  fi
+  sealed_at="$(yget completion.completed_at)"
+  if ! is_empty_value "$sealed_at"; then
+    validate_completion sealed
+    printf '%s\n' sealed
+    return
+  fi
+  if state_is_unfinished "$STATE"; then
+    printf '%s\n' unfinished
+    return
+  fi
+  die "active workflow state 既非 empty、unfinished，也非 valid sealed state"
+}
+
+validate_snapshot_files(){
+  local key="$1" yaml="$2" meta="$3" format repository_hash state_hash
+  assert_regular_snapshot_file "$yaml" "snapshot YAML"
+  assert_regular_snapshot_file "$meta" "snapshot metadata"
+  if ! awk -v format="$SNAPSHOT_FORMAT" '
+    NR==1 {if($0!="format: " format) exit 1}
+    NR==2 {if($0!~/^repository_sha256: [0-9a-f]+$/) exit 1}
+    NR==3 {if($0!~/^state_sha256: [0-9a-f]+$/) exit 1}
+    END {if(NR!=3) exit 1}
+  ' "$meta"; then
+    die "snapshot metadata 格式非法: $key"
+  fi
+  format="$(sed -n '1s/^format: //p' "$meta")"
+  repository_hash="$(sed -n '2s/^repository_sha256: //p' "$meta")"
+  state_hash="$(sed -n '3s/^state_sha256: //p' "$meta")"
+  [ "$format" = "$SNAPSHOT_FORMAT" ] || die "snapshot metadata format 不支持: $key"
+  printf '%s\n' "$repository_hash" | grep -Eq '^[0-9a-f]{64}$' || die "snapshot repository hash 非法: $key"
+  printf '%s\n' "$state_hash" | grep -Eq '^[0-9a-f]{64}$' || die "snapshot state hash 非法: $key"
+  [ "$repository_hash" = "$(repository_sha256)" ] || die "snapshot repository 不匹配: $key"
+  [ "$state_hash" = "$(file_sha256 "$yaml")" ] || die "snapshot state hash 不匹配: $key"
+  state_is_unfinished "$yaml" || die "snapshot 不是 valid unfinished workflow state: $key"
+  printf '%s\n' "$state_hash"
+}
+
+validate_snapshot_pair(){
+  local key="$1"
+  validate_snapshot_files "$key" "$(snapshot_path "$key" yaml)" "$(snapshot_path "$key" meta)"
+}
+
+write_fresh_state(){
+  local task_name="$1" task_level="$2" repo_root branch base_revision state_dir
+  state_dir="$(dirname "$STATE")"
+  mkdir -p "$state_dir"
+  ACTIVE_TMP="$(mktemp "$state_dir/.workflow-state.yaml.new.XXXXXX")"
+  cp "$PLUGIN_ROOT/templates/workflow-state.yaml" "$ACTIVE_TMP"
+  repo_root="$(canonical_repo_root)"
+  branch="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s' non-git)"
+  if ! base_revision="$(git -C "$REPO" rev-parse --verify HEAD 2>/dev/null)"; then
+    base_revision=unborn
+  fi
+  (
+    STATE="$ACTIVE_TMP"
+    write_field task "$task_name"
+    write_field level "$task_level"
+    write_field phase brainstorm
+    write_field context.repo "$repo_root"
+    write_field context.branch "$branch"
+    write_field execution.base_revision "$base_revision"
+    if [ "$task_level" = L4 ]; then reset_understanding not-required; fi
+  )
+  state_is_unfinished "$ACTIVE_TMP" || die "无法创建 valid unfinished workflow state"
+  mv "$ACTIVE_TMP" "$STATE"
+  ACTIVE_TMP=""
 }
 
 understanding_kind_for_level(){
@@ -732,27 +950,65 @@ case "${1:-}" in
     fi
     echo "✓ 状态文件就绪：$STATE" ;;
   start)
-    [ -f "$STATE" ] || die "状态文件不存在，先 init"
-    [ "$#" -ge 3 ] || die "用法: workflow-state.sh [--repo R] start <task> <level>"
-    sealed_at="$(yget completion.completed_at)"
-    ! is_empty_value "$sealed_at" || die "只有已完成并封存的任务可 start 新任务"
+    [ "$#" -eq 3 ] || die "用法: workflow-state.sh [--repo R] start <task> <level>"
     task_name="$2"; task_level="$3"
     [ -n "$task_name" ] || die "task 不能为空"
     in_list "$task_level" "$VALID_LEVELS" || die "非法 level ${task_level}（允许: ${VALID_LEVELS}）"
-    cp "$PLUGIN_ROOT/templates/workflow-state.yaml" "$STATE"
-    repo_root="$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null || printf '%s' "$REPO")"
-    branch="$(git -C "$REPO" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s' non-git)"
-    write_field task "$task_name"
-    write_field level "$task_level"
-    write_field phase brainstorm
-    write_field context.repo "$repo_root"
-    write_field context.branch "$branch"
-    if ! base_revision="$(git -C "$REPO" rev-parse --verify HEAD 2>/dev/null)"; then
-      base_revision=unborn
-    fi
-    write_field execution.base_revision "$base_revision"
-    if [ "$task_level" = L4 ]; then reset_understanding not-required; fi
+    slot_kind="$(active_slot_kind)"
+    [ "$slot_kind" != unfinished ] || die "unfinished active task 不得被 start 覆盖；请先 suspend"
+    write_fresh_state "$task_name" "$task_level"
     echo "✓ 新任务已开始（task=${task_name}, level=${task_level}, phase=brainstorm）" ;;
+  suspend)
+    [ "$#" -eq 2 ] || die "用法: workflow-state.sh [--repo R] suspend <key>"
+    key="$2"
+    validate_snapshot_key "$key"
+    assert_snapshot_directory_safe true
+    snapshot_yaml="$(snapshot_path "$key" yaml)"
+    snapshot_meta="$(snapshot_path "$key" meta)"
+    if [ -e "$snapshot_yaml" ] || [ -L "$snapshot_yaml" ] || [ -e "$snapshot_meta" ] || [ -L "$snapshot_meta" ]; then
+      die "snapshot key 已存在或存在 partial pair: $key"
+    fi
+    [ -f "$STATE" ] && [ ! -L "$STATE" ] || die "没有可 suspend 的 active workflow state"
+    state_is_unfinished "$STATE" || die "只有 valid unfinished workflow state 可以 suspend"
+    ensure_snapshot_ignore
+    SNAPSHOT_TMP_YAML="$(mktemp "$SUSPENDED_DIR/.${key}.yaml.tmp.XXXXXX")"
+    SNAPSHOT_TMP_META="$(mktemp "$SUSPENDED_DIR/.${key}.meta.tmp.XXXXXX")"
+    cp "$STATE" "$SNAPSHOT_TMP_YAML"
+    snapshot_state_sha="$(file_sha256 "$SNAPSHOT_TMP_YAML")"
+    snapshot_repository_sha="$(repository_sha256)"
+    printf '%s\n' \
+      "format: $SNAPSHOT_FORMAT" \
+      "repository_sha256: $snapshot_repository_sha" \
+      "state_sha256: $snapshot_state_sha" > "$SNAPSHOT_TMP_META"
+    validate_snapshot_files "$key" "$SNAPSHOT_TMP_YAML" "$SNAPSHOT_TMP_META" >/dev/null
+    mv "$SNAPSHOT_TMP_YAML" "$snapshot_yaml"
+    SNAPSHOT_TMP_YAML=""
+    mv "$SNAPSHOT_TMP_META" "$snapshot_meta"
+    SNAPSHOT_TMP_META=""
+    validate_snapshot_pair "$key" >/dev/null
+    rm "$STATE"
+    echo "✓ workflow task 已 suspend（key=${key}，active slot=empty）" ;;
+  resume)
+    [ "$#" -eq 2 ] || die "用法: workflow-state.sh [--repo R] resume <key>"
+    key="$2"
+    validate_snapshot_key "$key"
+    assert_snapshot_directory_safe false
+    slot_kind="$(active_slot_kind)"
+    [ "$slot_kind" != unfinished ] || die "unfinished active task 不得被 resume 覆盖；请先 suspend"
+    snapshot_yaml="$(snapshot_path "$key" yaml)"
+    snapshot_meta="$(snapshot_path "$key" meta)"
+    snapshot_state_sha="$(validate_snapshot_pair "$key")"
+    mkdir -p "$(dirname "$STATE")"
+    ACTIVE_TMP="$(mktemp "$(dirname "$STATE")/.workflow-state.yaml.resume.XXXXXX")"
+    cp "$snapshot_yaml" "$ACTIVE_TMP"
+    state_is_unfinished "$ACTIVE_TMP" || die "恢复临时 state 校验失败: $key"
+    [ "$(file_sha256 "$ACTIVE_TMP")" = "$snapshot_state_sha" ] || die "恢复临时 state hash 不匹配: $key"
+    mv "$ACTIVE_TMP" "$STATE"
+    ACTIVE_TMP=""
+    [ "$(file_sha256 "$STATE")" = "$snapshot_state_sha" ] || die "恢复后的 active state hash 不匹配: $key"
+    rm "$snapshot_yaml" || die "active state 已恢复，但 YAML snapshot 清理失败: $key"
+    rm "$snapshot_meta" || die "active state 已恢复，但 metadata snapshot 清理失败: $key"
+    echo "✓ workflow task 已 resume（key=${key}，phase=$(yget phase)）" ;;
   goal)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] goal <objective>"
@@ -955,5 +1211,5 @@ case "${1:-}" in
     fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
-  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
+  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
 esac

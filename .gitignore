@@ -9,5 +9,6 @@ eval/results/
 docs/superpowers/.workflow-state.yaml
 docs/superpowers/.workflow-state.yaml.lock/
 docs/superpowers/.workflow-evidence/
+docs/superpowers/.workflow-suspended/
 docs/superpowers/specs/
 docs/superpowers/plans/
