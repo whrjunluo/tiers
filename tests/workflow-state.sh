@@ -92,6 +92,92 @@ with open(path, "w", encoding="utf-8") as fh:
 PY
   printf '%s\n' "docs/superpowers/.workflow-evidence/$name"
 }
+platform_review_evidence(){
+  local repo="$1" name="$2" fingerprint="$3" created_at="$4" profile="$5" path external_name
+  path="$repo/docs/superpowers/.workflow-evidence/$name"
+  external_name="${name%.json}-external.json"
+  mkdir -p "$(dirname "$path")"
+  python3 - "$path" "$repo/docs/superpowers/.workflow-evidence/$external_name" "$external_name" "$fingerprint" "$created_at" "$profile" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+external_path = pathlib.Path(sys.argv[2])
+external_name, fingerprint, created_at, profile = sys.argv[3:]
+artifact = "a" * 64
+external = {
+    "runner": "tiers.external-agent/v1",
+    "success": False,
+    "quorum": False,
+    "outcome": "failed",
+    "review_profile": profile,
+    "policy": {
+        "minimum_successes": 1 if profile == "small-fix" else 2,
+        "minimum_families": 1 if profile == "small-fix" else 2,
+        "stop_after_policy": profile == "small-fix",
+    },
+    "artifact_sha256": artifact,
+    "repository_fingerprint": fingerprint,
+    "created_at": created_at,
+    "finished_at": created_at,
+    "duration_seconds": 2.0,
+    "successful_families": [],
+    "selection": {
+        "mode": "explicit",
+        "orchestrator_family": "openai",
+        "selected_reviewers": ["cursor", "mimo"],
+    },
+    "error": "cross-review quorum not met",
+    "reviewers": [
+        {"agent": "cursor", "family": "cursor", "success": False,
+         "status": "timeout", "timeout_seconds": 90, "duration_seconds": 90.0,
+         "error": "cursor timed out"},
+        {"agent": "mimo", "family": "xiaomi", "success": False,
+         "status": "failed", "timeout_seconds": 90, "duration_seconds": 1.0,
+         "error": "mimo returned empty output"},
+    ],
+}
+external_path.write_text(json.dumps(external), encoding="utf-8")
+external_sha = hashlib.sha256(external_path.read_bytes()).hexdigest()
+platform = {
+    "runner": "tiers.platform-review/v1",
+    "success": True,
+    "quorum": False,
+    "platform_quorum": True,
+    "outcome": "fallback-quorum",
+    "review_profile": profile,
+    "repository_fingerprint": fingerprint,
+    "artifact_sha256": artifact,
+    "prompt_sha256": "b" * 64,
+    "created_at": created_at,
+    "finished_at": created_at,
+    "duration_seconds": 2.0,
+    "external_attempt": {
+        "path": f"docs/superpowers/.workflow-evidence/{external_name}",
+        "sha256": external_sha,
+    },
+    "policy": {
+        "minimum_successes": 2,
+        "minimum_models": 2,
+        "minimum_roles": 2,
+        "requires_external_failure": True,
+    },
+    "reviewers": [
+        {"agent_id": "agent-sol", "model": "gpt-5.6-sol",
+         "role": "correctness-regression", "status": "success",
+         "verdict": "PASS", "result": "No correctness blockers.", "findings": []},
+        {"agent_id": "agent-terra", "model": "gpt-5.6-terra",
+         "role": "security-degradation", "status": "success",
+         "verdict": "PASS", "result": "No degradation blockers.", "findings": []},
+    ],
+    "adjudication": {"status": "PASS", "findings": []},
+}
+path.write_text(json.dumps(platform), encoding="utf-8")
+PY
+  printf '%s\n' "docs/superpowers/.workflow-evidence/$name"
+}
 confirmation_evidence(){
   local repo="$1" name="$2" scope="$3" path
   path="$repo/docs/superpowers/.workflow-evidence/$name"
@@ -730,6 +816,97 @@ standard_degraded_path="$(degraded_review_evidence "$STANDARD_DEGRADED" degraded
 bash "$WS" --repo "$STANDARD_DEGRADED" complete >/dev/null
 [ "$(getf "$STANDARD_DEGRADED" phase)" = done ] || fail "small-fix 应接受有效 one-success degraded review"
 
+# A failed external attempt can be replaced by an honest two-model platform fallback.
+PLATFORM_STANDARD="$(understanding_repo platform-standard L2)"
+setf "$PLATFORM_STANDARD" context.environment n/a
+setf "$PLATFORM_STANDARD" context.delivery local-only
+setf "$PLATFORM_STANDARD" requirements.external_review true
+platform_standard_understanding="$(evidence "$PLATFORM_STANDARD" understanding.txt $'result: PASS\nkind: impact\naffected: completion review provider\ntests: platform fallback contract')"
+bash "$WS" --repo "$PLATFORM_STANDARD" understand "$platform_standard_understanding" >/dev/null
+setf "$PLATFORM_STANDARD" phase review
+setf "$PLATFORM_STANDARD" evidence.tests "$(evidence "$PLATFORM_STANDARD" tests.txt $'command: platform fallback tests\nexit_code: 0')"
+setf "$PLATFORM_STANDARD" evidence.residual_risks "$(evidence "$PLATFORM_STANDARD" risks.txt 'risk: platform evidence is operator-authored')"
+platform_standard_fingerprint="$(python3 "$RUNNER" --fingerprint --cd "$PLATFORM_STANDARD")"
+platform_standard_path="$(platform_review_evidence "$PLATFORM_STANDARD" platform.json "$platform_standard_fingerprint" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" standard)"
+setf "$PLATFORM_STANDARD" evidence.external_review "$platform_standard_path"
+bash "$WS" --repo "$PLATFORM_STANDARD" complete >/dev/null
+[ "$(getf "$PLATFORM_STANDARD" phase)" = done ] || fail "standard 应接受有效 platform fallback quorum"
+bash "$WS" --repo "$PLATFORM_STANDARD" check >/dev/null || fail "sealed check 应重验 platform fallback"
+
+PLATFORM_SMALL_FIX="$(understanding_repo platform-small-fix L2)"
+setf "$PLATFORM_SMALL_FIX" context.environment n/a
+setf "$PLATFORM_SMALL_FIX" context.delivery local-only
+setf "$PLATFORM_SMALL_FIX" requirements.external_review true
+setf "$PLATFORM_SMALL_FIX" execution.profile small-fix
+platform_small_understanding="$(evidence "$PLATFORM_SMALL_FIX" understanding.txt $'result: PASS\nkind: impact\naffected: small-fix review fallback\ntests: still requires two platform models')"
+bash "$WS" --repo "$PLATFORM_SMALL_FIX" understand "$platform_small_understanding" >/dev/null
+setf "$PLATFORM_SMALL_FIX" phase review
+setf "$PLATFORM_SMALL_FIX" evidence.tests "$(evidence "$PLATFORM_SMALL_FIX" tests.txt $'command: platform small-fix tests\nexit_code: 0')"
+setf "$PLATFORM_SMALL_FIX" evidence.residual_risks "$(evidence "$PLATFORM_SMALL_FIX" risks.txt 'risk: external providers unavailable')"
+platform_small_fingerprint="$(python3 "$RUNNER" --fingerprint --cd "$PLATFORM_SMALL_FIX")"
+platform_small_path="$(platform_review_evidence "$PLATFORM_SMALL_FIX" platform.json "$platform_small_fingerprint" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" small-fix)"
+setf "$PLATFORM_SMALL_FIX" evidence.external_review "$platform_small_path"
+bash "$WS" --repo "$PLATFORM_SMALL_FIX" complete >/dev/null
+[ "$(getf "$PLATFORM_SMALL_FIX" phase)" = done ] || fail "small-fix platform fallback 仍应要求并接受两个模型"
+
+PLATFORM_INVALID="$(understanding_repo platform-invalid L2)"
+setf "$PLATFORM_INVALID" context.environment n/a
+setf "$PLATFORM_INVALID" context.delivery local-only
+setf "$PLATFORM_INVALID" requirements.external_review true
+platform_invalid_understanding="$(evidence "$PLATFORM_INVALID" understanding.txt $'result: PASS\nkind: impact\naffected: invalid platform evidence\ntests: completion must fail closed')"
+bash "$WS" --repo "$PLATFORM_INVALID" understand "$platform_invalid_understanding" >/dev/null
+setf "$PLATFORM_INVALID" phase review
+setf "$PLATFORM_INVALID" evidence.tests "$(evidence "$PLATFORM_INVALID" tests.txt $'command: invalid platform tests\nexit_code: 0')"
+setf "$PLATFORM_INVALID" evidence.residual_risks "$(evidence "$PLATFORM_INVALID" risks.txt 'risk: none')"
+platform_invalid_fingerprint="$(python3 "$RUNNER" --fingerprint --cd "$PLATFORM_INVALID")"
+
+invalid_platform_report(){
+  platform_review_evidence "$PLATFORM_INVALID" invalid-platform.json "$platform_invalid_fingerprint" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" standard >/dev/null
+  printf '%s\n' "$PLATFORM_INVALID/docs/superpowers/.workflow-evidence/invalid-platform.json"
+}
+
+invalid_report="$(invalid_platform_report)"
+python3 - "$invalid_report" <<'PY'
+import json, sys
+path=sys.argv[1]; data=json.load(open(path)); data["reviewers"][1]["model"]="GPT-5.6-SOL"; json.dump(data, open(path,"w"))
+PY
+setf "$PLATFORM_INVALID" evidence.external_review docs/superpowers/.workflow-evidence/invalid-platform.json
+expect_fail "same-model platform reviewers 不得完成" bash "$WS" --repo "$PLATFORM_INVALID" complete
+
+invalid_report="$(invalid_platform_report)"
+python3 - "$invalid_report" <<'PY'
+import json, sys
+path=sys.argv[1]; data=json.load(open(path)); data["reviewers"].pop(); json.dump(data, open(path,"w"))
+PY
+expect_fail "single platform reviewer 不得完成" bash "$WS" --repo "$PLATFORM_INVALID" complete
+
+invalid_report="$(invalid_platform_report)"
+python3 - "$invalid_report" "$PLATFORM_INVALID/docs/superpowers/.workflow-evidence/invalid-platform-external.json" <<'PY'
+import hashlib, json, sys
+report_path, attempt_path=sys.argv[1:]; attempt=json.load(open(attempt_path)); attempt["outcome"]="terminated"; json.dump(attempt, open(attempt_path,"w")); report=json.load(open(report_path)); report["external_attempt"]["sha256"]=hashlib.sha256(open(attempt_path,"rb").read()).hexdigest(); json.dump(report, open(report_path,"w"))
+PY
+expect_fail "user-terminated external attempt 不得 fallback" bash "$WS" --repo "$PLATFORM_INVALID" complete
+
+invalid_report="$(invalid_platform_report)"
+printf '\n' >> "$PLATFORM_INVALID/docs/superpowers/.workflow-evidence/invalid-platform-external.json"
+expect_fail "tampered external attempt hash 不得完成" bash "$WS" --repo "$PLATFORM_INVALID" complete
+
+invalid_report="$(invalid_platform_report)"
+python3 - "$invalid_report" <<'PY'
+import json, sys
+path=sys.argv[1]; data=json.load(open(path)); finding={"id":"block-1","blocking":True,"summary":"blocking issue","evidence":"script:1"}; data["reviewers"][0].update(verdict="FINDINGS",findings=[finding]); json.dump(data, open(path,"w"))
+PY
+if bash "$WS" --repo "$PLATFORM_INVALID" complete >"$ROOT/platform-invalid.out" 2>"$ROOT/platform-invalid.err"; then
+  fail "unresolved blocking platform finding 不得完成"
+fi
+if grep -q Traceback "$ROOT/platform-invalid.err"; then fail "invalid platform evidence 不得输出 traceback"; fi
+
+printf '%s\n' '[]' > "$PLATFORM_INVALID/docs/superpowers/.workflow-evidence/invalid-platform.json"
+if bash "$WS" --repo "$PLATFORM_INVALID" complete >"$ROOT/platform-non-object.out" 2>"$ROOT/platform-non-object.err"; then
+  fail "non-object platform report 不得完成"
+fi
+if grep -q Traceback "$ROOT/platform-non-object.err"; then fail "non-object platform report 不得输出 traceback"; fi
+
 # Business completion requires a real environment and real-request evidence.
 BUSINESS="$(new_repo business)"
 setf "$BUSINESS" task auth-closeout
@@ -856,9 +1033,15 @@ grep -q 'small-fix' "$SKILL" || fail "dev-workflow 应声明 small-fix 快速通
 grep -q 'reuses:' "$SKILL" || fail "dev-workflow 应说明同目标 understanding 证据复用"
 grep -q 'checkpoint commit' "$SKILL" || fail "dev-workflow 应说明 business verify 不阻塞本地 checkpoint commit"
 grep -q '状态变化' "$SKILL" || fail "dev-workflow 应禁止无信息固定频率状态刷屏"
+grep -q 'tiers.platform-review/v1' "$SKILL" || fail "dev-workflow 应声明 platform fallback evidence runner"
+grep -q '两个不同.*模型\|two distinct.*models' "$SKILL" || fail "dev-workflow 应要求两个不同模型"
+grep -q 'external cross-review failed; platform multi-model fallback passed' "$SKILL" || fail "dev-workflow 应要求诚实的 fallback 完成措辞"
+grep -q '用户终止.*不得.*fallback\|user termination.*no fallback' "$SKILL" || fail "dev-workflow 应禁止用户终止后继续 fallback"
 if grep -q '仅 L0/L1 需要维护' "$SKILL"; then fail "高风险 L2/L3 不得跳过状态机"; fi
 if grep -q 'L2–L4 太短，可跳过' "$SKILL"; then fail "高风险 L2/L3 不得被短任务豁免"; fi
 grep -q 'workflow-state.sh suspend' "$HERE/README.md" || fail "README 应说明 suspend 命令"
 grep -q 'workflow-state.sh resume' "$HERE/README.md" || fail "README 应说明 resume 命令"
+grep -q 'tiers.platform-review/v1' "$HERE/README.md" || fail "README 应说明 platform fallback evidence"
+grep -q 'external cross-review failed; platform multi-model fallback passed' "$HERE/README.md" || fail "README 应说明 fallback provenance wording"
 grep -qxF 'docs/superpowers/.workflow-suspended/' "$HERE/.gitignore" || fail "仓库应忽略 suspended snapshots"
 echo "PASS tests/workflow-state.sh"

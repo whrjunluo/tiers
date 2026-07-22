@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
   | bash -s -- --codex
 ```
 
-当前 stable release 为 `v0.9.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
+当前 stable release 为 `v0.10.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
 
 如果 `~/.local/bin` 不在 `PATH`，安装器会给出提示；加入后可在任意目录运行 `dev-workflow`。装完**重启 Codex 或新开会话**。加 `--install-deps` 会一并安装可脚本化的伴侣 skill：
 
@@ -211,7 +211,7 @@ doctor 还会输出对抗评审能力：
 | `external-partial` | 检测到 1 个外部 CLI，可做二次意见但不算完整交叉评审 |
 | `external-ready` | 检测到 2 个以上不同家族 CLI 候选；实际调用成功并返回 `quorum=true` 才算评审通过 |
 
-平台内子代理和多模型能力由运行时检测。触发外部交叉评审时，外部 CLI 优先，平台子代理只作不可用时的降级或额外补充，不能冒充已通过的外部 quorum。
+平台内子代理和多模型能力由运行时检测。外部 CLI 仍优先；当真实外部报告为 `success=false`、`quorum=false`、`outcome=failed` 时，host 可并行启动两个不同模型、不同角色的平台子代理，逐条裁决后生成 `tiers.platform-review/v1`。该平台 fallback 可满足完成门，但保持 `quorum=false`、`platform_quorum=true`；用户终止的外部评审不得继续降级。最终必须诚实写明 `external cross-review failed; platform multi-model fallback passed`，不能冒充 external quorum。
 
 默认不会静默安装依赖。需要自动安装可脚本化依赖时，显式运行：
 
@@ -259,6 +259,8 @@ python3 <plugin-root>/scripts/external_agent.py \
 `--agent` 可选 `codex / cursor / grok / mimo / opencode / antigravity`。`--list` 同时显示 family、`health_status`、`routing_priority` 和 `recommended_timeout_seconds`；首次超时标记为 `slow` 并提高建议值，当前存在失败 streak 就降为 `deprioritized`，连续两次失败升级为 `degraded`，恢复成功后保留 `slow` 历史。`--cross-review auto --orchestrator-family openai` 会确定性选择已安装、更健康、且不同家族的 reviewer，并排除主流程家族；实际 provider 家族未知的 `opencode` 不会在 auto 模式中冒充独立家族。不足两个合格家族时返回结构化失败。`--cross-review` 并行调用 reviewer：standard 仍要求双家族 quorum；`small-fix` 显式使用 90 秒默认预算，一个 reviewer 成功时保留 `quorum=false` 并输出 `outcome=degraded`。standard 的 provider 建议超时在未显式传 `--timeout` 时最多为 600 秒，显式 timeout 可覆盖上限。
 
 `--progress jsonl` 默认把 `cross_review_started`、`review_started`、`review_finished`、`policy_satisfied`、`cross_review_terminated` 和 `cross_review_finished` 实时写到 stderr；stdout 只保留最终 JSON/文本，因此可继续重定向为完成证据。进度事件不改变 quorum 或降级规则。失败、取消和用户终止也输出带 reviewer status/耗时的机器可读证据；用户要求停止时立即终止，保存 `outcome=terminated` 证据，不继续后续 review 门禁。完成门只接受 24 小时内且仍匹配当前仓库的报告。`--context git` 会发送当前 staged/unstaged diff；不要包含密钥、`.env`、完整敏感 payload 或无关私有文件。
+
+外部 standard 评审正常失败后，平台 host 才能用两个不同模型的只读子代理形成正式 fallback。两个 reviewer 必须共享同一 repository fingerprint、artifact hash 和 prompt hash，分别使用 `correctness-regression` / `security-degradation` 角色；报告引用外部失败文件及其 SHA-256，并通过 `scripts/platform_review_contract.py` 校验。`external_agent.py` 本身不会静默启动平台子代理，平台调度与裁决由 host 负责。
 
 ## 脚本路径
 

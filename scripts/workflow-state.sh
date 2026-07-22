@@ -633,7 +633,7 @@ require_evidence_file(){
 }
 
 validate_external_review(){
-  local mode="${1:-current}" value path expected_fingerprint reference_time profile
+  local mode="${1:-current}" value path expected_fingerprint reference_time profile runner output
   value="$(yget evidence.external_review)"
   if is_empty_value "$value"; then
     add_error "缺少 evidence.external_review"
@@ -662,6 +662,42 @@ validate_external_review(){
     reference_time="$(yget completion.completed_at)"
   fi
   profile="$(yget execution.profile)"
+  if ! runner="$(python3 - "$path" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+if not isinstance(data, dict):
+    raise SystemExit(1)
+runner = data.get("runner")
+if not isinstance(runner, str) or not runner:
+    raise SystemExit(1)
+print(runner)
+PY
+  )"; then
+    add_error "evidence.external_review 不是合法的 review JSON: $value"
+    return
+  fi
+  if [ "$runner" = "tiers.platform-review/v1" ]; then
+    if ! output="$(python3 "$PLUGIN_ROOT/scripts/platform_review_contract.py" \
+      --validate "$path" \
+      --fingerprint "$expected_fingerprint" \
+      --reference "$reference_time" \
+      --profile "$profile" \
+      --repo "$REPO" 2>&1)"; then
+      add_error "evidence.external_review 不是有效的平台多模型 fallback JSON: $value${output:+ ($output)}"
+    fi
+    return
+  fi
+  if [ "$runner" != "tiers.external-agent/v1" ]; then
+    add_error "evidence.external_review runner 不受支持: $runner"
+    return
+  fi
   if ! python3 - "$path" "$expected_fingerprint" "$reference_time" "$profile" <<'PY'
 from datetime import datetime, timezone
 import json

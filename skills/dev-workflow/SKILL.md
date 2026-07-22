@@ -103,15 +103,15 @@ description: Use when a development task could change code, behavior, configurat
 
 provider 优先级：
 1. **外部交叉评审（external-cross-review）**：若 `external-agent` 可用且 `bin/doctor` 显示 `Adversarial review: external-ready`，或 `external_agent.py --list` 显示 ≥2 个不同家族外部 CLI 候选，优先用 `external_agent.py --cross-review <a>,<b>` 做只读 review。调用前同时检查 `health_status`、`routing_priority` 与 `recommended_timeout_seconds`：优先 `routing_priority=normal` 的不同家族组合（通常 `grok` / `cursor` / `mimo`）；`antigravity` 标记为 `slow`/`degraded` 时降为后备，用户明确指定时仍按建议超时调用并报告状态。runner 会并行启动 reviewer；standard profile 必须实际返回 ≥2 个不同家族的成功结果且 `quorum=true` 才算通过。高风险业务闭环任务必须先尝试此项；认证失败、空产出、部分失败或只剩同家族 provider 时只算二次意见，不算完整交叉评审。符合「小修复快速通道」时，改用下面的显式 small-fix 降级契约。
-2. **平台子代理（platform-agents）**：仅当外部交叉评审不可用、用户明确要求平台子代理、或作为外部 review 之外的补充时使用。不同 reviewer 用不同审查角色，例如“回归风险 reviewer”和“安装/降级路径 reviewer”。平台子代理不能替代已触发的外部交叉评审。
-3. **平台多模型（multi-model）**：若平台允许指定模型，且用户明确允许多模型，给 reviewer 分配不同模型；不允许或不可用时，同模型不同 prompt 也可用。
+2. **平台多模型降级（platform multi-model fallback）**：外部交叉评审已真实运行并保存 `success=false`、`quorum=false`、`outcome=failed` 的证据后，若 host 能指定模型，可并行启动两个不同非 root 子代理，要求两个不同模型、两个不同角色：`correctness-regression` 与 `security-degradation`。两者必须审查同一冻结 fingerprint / artifact / prompt，主流程逐条裁决后生成 `tiers.platform-review/v1`。该证据可以满足标准完成门，但必须保持 `quorum=false`、`platform_quorum=true`，不能冒充 external quorum。用户终止外部评审后不得启动 fallback；`outcome=terminated` 永远不能触发降级。
+3. **平台子代理补充（platform-agents）**：没有两个可辨识模型、未获得平台子代理授权、或不存在合格外部失败证据时，平台 reviewer 只能作为补充意见，不能满足 `requirements.external_review=true`。可使用不同审查角色，但同模型不同 prompt 不构成正式 platform fallback。
 4. **内置对抗 checklist（built-in）**：没有任何 provider 时也必须可执行。检查：最可能的回归点、缺依赖/缺 MCP 降级路径、安装脚本是否静默改环境、README/skill/脚本承诺是否一致、测试是否覆盖失败路径。
 
 纪律：
 - 不为对抗评审静默安装 provider；需要安装时只提示 `bin/doctor --install-deps` 或登录步骤。
 - 只读 review 默认不允许写文件。外部或子代理输出是证据，不是结论，主流程必须逐条裁决。
 - 若用户未授权平台子代理/外部 agent，则走内置 checklist，不阻塞交付；但高风险业务闭环任务必须在 final 里标明“外部交叉评审未完成”，不能写成已过完整对抗评审。
-- 收尾时必须展示采用的 provider、review 摘要、主流程裁决；若本应外部交叉评审但未完成，必须明确写出阻塞原因，禁止静默降级后声明“已完成”。
+- 收尾时必须展示采用的 provider、review 摘要、主流程裁决；平台降级通过时固定写 `external cross-review failed; platform multi-model fallback passed`，禁止写“external quorum passed”。若本应外部交叉评审但未完成，必须明确写出阻塞原因，禁止静默降级后声明“已完成”。
 
 完整交叉评审使用同一冻结输入并保存本地 JSON 证据。报告绑定当前 Git snapshot fingerprint，并且 `complete` 只接受 24 小时内、仍匹配当前仓库状态的 quorum：
 
@@ -122,6 +122,18 @@ python3 <plugin-root>/scripts/external_agent.py \
   --PROMPT "只读审查当前改动，只报告有证据的问题" \
   > docs/superpowers/.workflow-evidence/external-review.json
 ```
+
+若上述调用正常结束但输出 `outcome=failed`，host 才能启动正式平台降级。两个 reviewer 必须收到同一冻结输入并记录唯一 `agent_id`、规范化后不同的 `model`、固定 `role`、`verdict`、结构化 `findings` 与非空 `result`。主流程保存外部失败证据的仓库相对路径及 SHA-256，逐项生成精确 adjudication；blocking finding 必须修复，不能记为 `accepted-risk`。最终先本地验证，再把 `evidence.external_review` 指向 platform 报告：
+
+```bash
+python3 <plugin-root>/scripts/platform_review_contract.py \
+  --validate docs/superpowers/.workflow-evidence/platform-review.json \
+  --fingerprint "$(python3 <plugin-root>/scripts/external_agent.py --fingerprint --cd "$PWD")" \
+  --reference "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+  --profile standard --repo "$PWD"
+```
+
+`external_agent.py` 只负责严格执行外部策略并保存成功、失败或终止证据，不会自行启动平台子代理；平台调度、模型身份校验、裁决与 `tiers.platform-review/v1` 生成均由 host orchestrator 负责。
 
 `--progress jsonl` 把 `cross_review_started` / `review_started` / `review_finished` / `policy_satisfied` / `cross_review_terminated` / `cross_review_finished` 实时写到 stderr；stdout 只保留最终 JSON，可稳定重定向为完成证据。这些事件只提供可观测性，不会降低 standard 双家族 quorum。`auto` 会按安装状态、provider 健康和家族去重选两个 reviewer，`--orchestrator-family` 用于排除主流程自身家族。当 `opencode` 的实际 provider 家族无法证明时，auto 不会把它当成独立家族候选；只有 operator 能核实 provider 时才显式指定。standard 未显式传 `--timeout` 时，provider 建议最多只能把单 reviewer 等待抬到 600 秒；显式 timeout 仍可覆盖该上限。
 

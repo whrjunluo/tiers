@@ -23,6 +23,8 @@ echo "--- evaluation catalog unit ---"
 python3 "$HERE/test_eval_catalog.py"
 echo "--- autonomous confirmation contract unit ---"
 python3 "$HERE/test_confirmation_contract.py"
+echo "--- platform review fallback contract unit ---"
+(cd "$HERE/.." && python3 -m unittest tests.test_platform_review_contract -v)
 echo "--- evaluation Codex provider unit ---"
 python3 "$HERE/test_eval_codex_provider.py"
 echo "=== 个人/工作区路径扫描 ==="

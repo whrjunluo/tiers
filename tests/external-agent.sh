@@ -458,6 +458,9 @@ grep -q 'review_finished' "$SKILL" || fail "review lifecycle completion event mi
 grep -q '600' "$SKILL" || fail "standard implicit timeout cap missing from skill"
 grep -q '并行\|parallel' "$SKILL" || fail "parallel cross-review policy missing from skill"
 grep -q 'terminated' "$SKILL" || fail "terminated evidence contract missing from skill"
+grep -q 'tiers.platform-review/v1' "$SKILL" || fail "platform fallback evidence ownership missing from skill"
+grep -q '外部失败证据\|external failure evidence' "$SKILL" || fail "external runner must preserve failure evidence for host fallback"
+grep -q '不得.*启动平台子代理\|never.*launch.*platform' "$SKILL" || fail "external runner must not silently launch platform agents"
 for a in codex gemini mimo cursor grok opencode antigravity; do
   grep -q "$a" "$SKILL" || fail "$a missing from skill"
 done

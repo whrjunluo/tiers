@@ -54,8 +54,8 @@ manifests = (
 print(",".join(json.loads((root / path).read_text(encoding="utf-8"))["version"] for path in manifests))
 PY
 )"
-[ "$release_versions" = "0.9.0,0.9.0,0.9.0" ] || \
-  fail "release manifests must all be 0.9.0, found $release_versions"
+[ "$release_versions" = "0.10.0,0.10.0,0.10.0" ] || \
+  fail "release manifests must all be 0.10.0, found $release_versions"
 
 python3 - "$ROOT" "$SOURCE" <<'PY'
 import json
@@ -263,7 +263,7 @@ assert_contains "$(cat "$TMP/no-tag.out")" "No stable release tag"
 
 MISMATCH_REMOTE="$TMP/mismatch.git"
 git clone -q --bare "$REMOTE" "$MISMATCH_REMOTE"
-git --git-dir "$MISMATCH_REMOTE" tag v0.9.0 "$STABLE_COMMIT"
+git --git-dir "$MISMATCH_REMOTE" tag v0.10.0 "$STABLE_COMMIT"
 if HOME="$TMP/mismatch-home" DEV_WORKFLOW_REPO_URL="$MISMATCH_REMOTE" \
   DEV_WORKFLOW_INSTALL_ROOT="$TMP/mismatch-managed" DEV_WORKFLOW_BIN_DIR="$TMP/mismatch-bin" \
   TEST_LOG="$LOG" bash "$ROOT/install.sh" --codex >"$TMP/mismatch.out" 2>&1; then
