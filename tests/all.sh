@@ -11,6 +11,8 @@ for t in lib learnings workflow-state codegraph-judge external-agent doctor hook
 done
 echo "--- managed installer unit ---"
 (cd "$HERE/.." && python3 -m unittest tests.test_managed_install -v)
+echo "--- execution manifest unit ---"
+(cd "$HERE/.." && python3 -m unittest tests.test_execution_manifest -v)
 echo "--- python hook unit ---"
 python3 "$HERE/test_detect_judging_correction.py"
 echo "--- evaluation schema unit ---"
