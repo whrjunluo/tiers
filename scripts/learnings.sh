@@ -45,14 +45,15 @@ fold_category() {
   tmp="${LEARNINGS}.tmp.$$"
   count_file="${LEARNINGS}.fold-count.$$"
   if ! awk -v target="$target" -v count_file="$count_file" '
-    /^[[:space:]]*-[[:space:]]+date:/ { category="" }
-    /category:/ {
+    /^## 进化记录/ { inrec=1 }
+    inrec && /^[[:space:]]*-[[:space:]]+date:/ { category="" }
+    inrec && /category:/ {
       category=$0
       sub(/.*category:[[:space:]]*/, "", category)
       sub(/[[:space:]]*#.*/, "", category)
       gsub(/[[:space:]]+$/, "", category)
     }
-    /status:[[:space:]]*pending/ && category==target {
+    inrec && /status:[[:space:]]*pending/ && category==target {
       sub(/status:[[:space:]]*pending/, "status: folded")
       changed++
     }
