@@ -1173,5 +1173,18 @@ grep -q 'workflow-state.sh suspend' "$HERE/README.md" || fail "README 应说明 
 grep -q 'workflow-state.sh resume' "$HERE/README.md" || fail "README 应说明 resume 命令"
 grep -q 'tiers.platform-review/v1' "$HERE/README.md" || fail "README 应说明 platform fallback evidence"
 grep -q 'external cross-review failed; platform multi-model fallback passed' "$HERE/README.md" || fail "README 应说明 fallback provenance wording"
+for DOC in "$SKILL" "$HERE/README.md"; do
+  grep -q 'choose-execution' "$DOC" || fail "执行模式文档应说明 choose-execution"
+  grep -q '一次.*plan\|plan.*一次\|one-time.*plan' "$DOC" || fail "执行模式文档应说明 plan 后仅一次选择"
+  grep -q 'multi-agent' "$DOC" || fail "执行模式文档应说明 multi-agent"
+  grep -q '默认.*single\|single.*默认\|small.*single' "$DOC" || fail "执行模式文档应说明 small task 默认 single"
+  grep -q 'read-only\|只读' "$DOC" || fail "执行模式文档应说明只读共享"
+  grep -q 'worktree' "$DOC" || fail "执行模式文档应说明隔离 worktree"
+  grep -q 'write set\|写入集' "$DOC" || fail "执行模式文档应说明不重叠写入集"
+  grep -q 'host.*integrat\|host.*集成\|主控.*集成' "$DOC" || fail "执行模式文档应说明 host 集成职责"
+  grep -q 'conflict\|冲突' "$DOC" || fail "执行模式文档应说明冲突处理"
+  grep -q 'inline\|内联' "$DOC" || fail "执行模式文档应说明失败时内联回退"
+  grep -q 'cleanup.*integrat\|清理.*集成' "$DOC" || fail "执行模式文档应说明集成验证后清理"
+done
 grep -qxF 'docs/superpowers/.workflow-suspended/' "$HERE/.gitignore" || fail "仓库应忽略 suspended snapshots"
 echo "PASS tests/workflow-state.sh"

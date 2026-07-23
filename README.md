@@ -264,6 +264,14 @@ python3 <plugin-root>/scripts/external_agent.py \
 
 外部 standard 评审正常失败后，平台 host 才能用两个不同模型的只读子代理形成正式 fallback。两个 reviewer 必须共享同一 repository fingerprint、artifact hash 和 prompt hash，分别使用 `correctness-regression` / `security-degradation` 角色；报告引用外部失败文件及其 SHA-256，并通过 `scripts/platform_review_contract.py` 校验。`external_agent.py` 本身不会静默启动平台子代理，平台调度与裁决由 host 负责。
 
+### Plan 后选择执行方式
+
+在 plan 已完成、理解度通过、且尚未开始 TDD 测试时，host 只进行一次 `choose-execution` 选择：向用户展示 `single` 和 `multi-agent`、说明推荐及其依据，然后运行 `workflow-state.sh choose-execution <single|multi-agent> [manifest]`。小任务默认 `single`；只要并行收益不明确、write set 不能证明互不重叠，或需要频繁协调，也应选择 `single`。
+
+`multi-agent` 只适用于已绑定当前 plan 的 manifest，其中每个 worker 都有可验证且不重叠的 write set。plan、接口契约、只读证据和审查结论可以 read-only 共享；worker 绝不写主控 worktree 或 controller state，而是在各自隔离的 worktree 中只写自己的 write set。host 保留主控 worktree 的唯一写权，负责接收产物、集成、处理 conflict、运行验证，并确认没有 worker 直接变更主控状态。
+
+任何 worker 失败、超时、越出 write set，或形成无法安全处理的 conflict，host 都要记录失败原因并切换为 inline 执行；不会把该 worker 的写权限转交给另一个 worker。cleanup only after integration verification：host 完成集成验证后才 cleanup worker worktree、临时分支和资源，确保 cleanup 不会先于集成结果。
+
 ## 脚本路径
 
 所有脚本在仓库根目录的 `scripts/` 下（不在 `skills/dev-workflow/` 下）。以仓库根为 `<plugin-root>`：
