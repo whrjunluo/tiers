@@ -24,6 +24,7 @@ PLAN = "c" * 64
 def valid_manifest():
     return {
         "runner": "tiers.execution-manifest/v1",
+        "mode": "multi-agent",
         "repository": REPOSITORY,
         "base": BASE,
         "plan_sha": PLAN,
@@ -67,6 +68,14 @@ class ExecutionManifestTest(unittest.TestCase):
         data["tasks"][1]["dependencies"] = ["validator"]
         self.assertIn("ready task tests has unmet dependency validator", manifest.validate_manifest(data, self.repo, self.base, self.plan))
 
+    def test_rejects_dependency_cycle_even_when_no_task_is_ready(self):
+        data = valid_manifest()
+        data["tasks"][0]["status"] = "pending"
+        data["tasks"][0]["dependencies"] = ["tests"]
+        data["tasks"][1]["status"] = "pending"
+        data["tasks"][1]["dependencies"] = ["validator"]
+        self.assertIn("dependency cycle detected: validator -> tests -> validator", manifest.validate_manifest(data, self.repo, self.base, self.plan))
+
     def test_rejects_overlapping_write_sets(self):
         data = valid_manifest()
         data["tasks"][1]["write_set"] = ["scripts/execution_manifest.py"]
@@ -89,6 +98,11 @@ class ExecutionManifestTest(unittest.TestCase):
         data = valid_manifest()
         del data["tasks"][0]["write_set"]
         self.assertIn("task validator must declare a write_set", manifest.validate_manifest(data, self.repo, self.base, self.plan))
+
+    def test_rejects_empty_write_set_for_write_task(self):
+        data = valid_manifest()
+        data["tasks"][0]["write_set"] = []
+        self.assertIn("task validator write_set must not be empty", manifest.validate_manifest(data, self.repo, self.base, self.plan))
 
     def test_rejects_invalid_repository_base_and_plan_hashes(self):
         data = valid_manifest()
@@ -127,6 +141,11 @@ class ExecutionManifestTest(unittest.TestCase):
         }
         self.assertEqual(manifest.validate_manifest(data, self.repo, self.base, self.plan), [])
 
+    def test_rejects_manifest_without_explicit_mode(self):
+        data = valid_manifest()
+        del data["mode"]
+        self.assertIn("mode must be multi-agent", manifest.validate_manifest(data, self.repo, self.base, self.plan))
+
     def test_cli_emits_json_for_valid_and_invalid_manifests(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = pathlib.Path(temporary) / "manifest.json"
@@ -153,6 +172,33 @@ class ExecutionManifestTest(unittest.TestCase):
         self.assertEqual(invalid.returncode, 1)
         self.assertFalse(json.loads(invalid.stdout)["valid"])
         self.assertTrue(json.loads(invalid.stdout)["errors"])
+
+    def test_cli_returns_json_for_malformed_utf8_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = pathlib.Path(temporary) / "manifest.json"
+            path.write_bytes(b"\xff")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(MANIFEST_PATH),
+                    "--validate",
+                    str(path),
+                    "--repo",
+                    self.repo,
+                    "--base",
+                    self.base,
+                    "--plan-sha",
+                    self.plan,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(completed.returncode, 1)
+        result = json.loads(completed.stdout)
+        self.assertFalse(result["valid"])
+        self.assertTrue(result["errors"])
+        self.assertNotIn("Traceback", completed.stderr)
 
 
 if __name__ == "__main__":

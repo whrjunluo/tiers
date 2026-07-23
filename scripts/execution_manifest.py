@@ -7,7 +7,6 @@ import argparse
 import json
 import posixpath
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +46,7 @@ def validate_manifest(
     errors: list[str] = []
     if data.get("runner") != RUNNER_ID:
         errors.append(f"runner must be {RUNNER_ID}")
-    if data.get("mode", mode) != mode:
+    if data.get("mode") != mode:
         errors.append(f"mode must be {mode}")
 
     for field, expected, mismatch in (
@@ -82,6 +81,28 @@ def validate_manifest(
         else:
             task_by_id[task_id] = task
 
+    visited: set[str] = set()
+    visiting: list[str] = []
+
+    def visit(task_id: str) -> None:
+        if task_id in visiting:
+            cycle = visiting[visiting.index(task_id) :] + [task_id]
+            errors.append(f"dependency cycle detected: {' -> '.join(cycle)}")
+            return
+        if task_id in visited:
+            return
+        visiting.append(task_id)
+        dependencies = task_by_id[task_id].get("dependencies", [])
+        if isinstance(dependencies, list):
+            for dependency in dependencies:
+                if dependency in task_by_id:
+                    visit(dependency)
+        visiting.pop()
+        visited.add(task_id)
+
+    for task_id in task_by_id:
+        visit(task_id)
+
     ready_tasks: list[tuple[str, dict[str, Any]]] = []
     normalized_sets: list[tuple[str, str]] = []
     for task_id, task in task_by_id.items():
@@ -106,6 +127,8 @@ def validate_manifest(
         write_set = task.get("write_set")
         if not isinstance(write_set, list):
             errors.append(f"task {task_id} must declare a write_set")
+        elif not write_set:
+            errors.append(f"task {task_id} write_set must not be empty")
         else:
             for path in write_set:
                 normalized = _normalize_write_path(path)
@@ -142,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with args.validate.open(encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         print(json.dumps({"valid": False, "errors": [f"invalid manifest: {exc}"]}))
         return 1
 
