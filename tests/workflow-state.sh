@@ -408,6 +408,11 @@ understand_pass understanding-l1 L1 $'result: PASS\nkind: requirements\nacceptan
 understand_pass understanding-l2 L2 $'result: PASS\nkind: impact\naffected: state transitions\ntests: workflow-state suite' impact
 understand_pass understanding-l3 L3 $'result: PASS\nkind: root-cause\nreproduction: task with hash truncates\nroot_cause: comment stripping ignores quoting' root-cause
 
+ISOLATED_L3="$(understanding_repo understanding-isolated-l3 L3)"
+isolated_l3_evidence="$(evidence "$ISOLATED_L3" understanding.txt $'result: PASS\nkind: impact\naffected: isolated explicit entry point with no existing consumers\ntests: adapter contract suite')"
+bash "$WS" --repo "$ISOLATED_L3" understand "$isolated_l3_evidence" >/dev/null
+[ "$(getf "$ISOLATED_L3" understanding.kind)" = impact ] || fail "隔离新增 L3 应接受 impact understanding"
+
 # A same-objective L3 -> L1 reassessment may reuse the content-addressed root
 # cause while adding the newly required acceptance and non-goals evidence.
 REUSED="$(understanding_repo understanding-reused L3)"
@@ -432,7 +437,7 @@ other_requirements="$(evidence "$REUSED_OTHER" requirements.txt $'result: PASS\n
 expect_fail "不同 target 不得复用旧 understanding" bash "$WS" --repo "$REUSED_OTHER" understand "$other_requirements"
 
 UNDERSTANDING_WRONG_KIND="$(understanding_repo understanding-wrong-kind L3)"
-setf "$UNDERSTANDING_WRONG_KIND" evidence.tests "$(evidence "$UNDERSTANDING_WRONG_KIND" understanding.txt $'result: PASS\nkind: impact\naffected: parser\ntests: state test')"
+setf "$UNDERSTANDING_WRONG_KIND" evidence.tests "$(evidence "$UNDERSTANDING_WRONG_KIND" understanding.txt $'result: PASS\nkind: requirements\nacceptance: parser\nnon_goals: none')"
 expect_fail "L3 understanding 应拒绝错误 kind" bash "$WS" --repo "$UNDERSTANDING_WRONG_KIND" understand "$(getf "$UNDERSTANDING_WRONG_KIND" evidence.tests)"
 
 UNDERSTANDING_MISSING="$(understanding_repo understanding-missing L2)"
@@ -1063,6 +1068,13 @@ grep -q 'tiers.platform-review/v1' "$SKILL" || fail "dev-workflow 应声明 plat
 grep -q '两个不同.*模型\|two distinct.*models' "$SKILL" || fail "dev-workflow 应要求两个不同模型"
 grep -q 'external cross-review failed; platform multi-model fallback passed' "$SKILL" || fail "dev-workflow 应要求诚实的 fallback 完成措辞"
 grep -q '用户终止.*不得.*fallback\|user termination.*no fallback' "$SKILL" || fail "dev-workflow 应禁止用户终止后继续 fallback"
+grep -q '当前会话' "$SKILL" || fail "判级必须绑定当前会话"
+grep -q '新增.*不.*自动' "$SKILL" || fail "新增不得自动触发 L1/L2"
+grep -q '隔离新增.*L3' "$SKILL" || fail "隔离新增应有 L3 边界"
+grep -q '静态资源路径.*L4' "$SKILL" || fail "静态资源路径替换应有 L4 边界"
+grep -q '自动重判' "$SKILL" || fail "影响面证据变化后应允许自动重判"
+grep -q 'Kimi.*L3' "$SKILL" || fail "Kimi 隔离 adapter 案例应固化"
+grep -q 'OSS.*L4' "$SKILL" || fail "静态 OSS 迁移案例应固化"
 if grep -q '仅 L0/L1 需要维护' "$SKILL"; then fail "高风险 L2/L3 不得跳过状态机"; fi
 if grep -q 'L2–L4 太短，可跳过' "$SKILL"; then fail "高风险 L2/L3 不得被短任务豁免"; fi
 grep -q 'workflow-state.sh suspend' "$HERE/README.md" || fail "README 应说明 suspend 命令"

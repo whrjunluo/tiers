@@ -166,7 +166,18 @@ python3 <plugin-root>/scripts/external_agent.py \
 
    这一行让判断可见、可被用户当场纠正。没有这一行就开始改代码 = 流程违规。
 
-**判级 tie-breaker（拿不准时）：** 在两级之间犹豫，一律**走更严的那级**。
+### 当前会话两阶段判级
+
+判级对象是**当前会话这一个任务的真实增量**，不是仓库总体复杂度、上一任务遗留 diff、文件所在业务领域或请求里的某个关键词。
+
+1. **初判**：根据当前目标、预计生产改动、是否改变既有消费者/契约，输出初始级别。
+2. **影响面校准**：读完消费方、锁定本任务 base/checkpoint、看到实际 diff 或 task-scoped codegraph 后重新判断。证据与初判不一致时必须**自动重判**，可以升级也可以降级，并说明是哪项当前会话证据改变了结论，不等待用户再次纠正。
+
+每次判级至少回答：本会话究竟改变什么生产行为；哪些既有消费者或契约可能回归；是否仅通过新的显式入口可达；是否改变控制流、持久化、API/schema、权限或跨端时序；哪个 task base 与哪些测试界定了影响面。
+
+“新增”不自动等于 L1/L2；“位于业务代码附近”、改动文件数、codegraph risk 或某个领域关键词也不能单独定级。**隔离新增可判 L3**：入口显式、旧消费者/路由完全不变、回归边界可由本地契约测试覆盖。**静态资源路径替换可判 L4**：仅替换等价资源地址，不改变渲染逻辑、控制流、API/schema 或消费者语义，并补构建/资源可达性验证。
+
+**判级 tie-breaker（完成当前会话影响面校准后仍拿不准时）：** 在两级之间犹豫，走更严的那级。禁止跳过消费方/契约检查，直接用 tie-breaker 把所有任务推到 L2。
 - L1/L2 之间拿不准 → 按 **L1**（走 SDD）
 - L2/L3 之间拿不准 → 按**有回归风险**处理，补测试
 - L3/L4 之间拿不准 → 按 **L3**（先复现再改）
@@ -183,16 +194,25 @@ Q0: 涉及多个已有模块的结构性重组或架构迁移？
   → 是 → L0
   → 否 → Q1
 
-Q1: 新增了别人没有预期过的行为或结构？
+Q1: 新增完整模块、完整用户流程、跨模块编排，或存在多个未决行为分支？
   → 是 → L1
   → 否 → Q2
 
-Q2: 如果改错了，有可能回归现有功能？
-  → 是 → L2 或 L3（有测试要求）
-  → 否 → L4
+Q2: 是否改变既有共享逻辑、契约、消费者、控制流或跨端时序？
+  → 是，修复已知错误行为 → L3
+  → 是，新增/调整既有行为 → L2
+  → 否 → Q3
+
+Q3: 是否为显式入口后的完全隔离新增，旧消费者和旧路由保持不变？
+  → 是 → L3（impact evidence + 本地契约测试）
+  → 否 → Q4
+
+Q4: 是否仅为文案/样式或等价静态资源路径替换，运行逻辑不变？
+  → 是 → L4
+  → 否 → 回到消费方与契约检查；证据不足时偏严
 ```
 
-L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**。
+L2 vs L3 的区分不看“是不是新增”这个词：**改变既有行为/消费者的迭代 → L2；已知 bug，或无既有回归面的隔离新增 → L3**。
 
 ---
 
@@ -205,10 +225,10 @@ L2 vs L3 的区分：**新功能逻辑改动 → L2，线上 bug 修复 → L3**
 | L0 | 架构边界 / 迁移 / 回滚路径 | 留在 spec/architecture review；边界未锁定不得进入实施 |
 | L1 | 需求 / 设计（决策树分支、边界） | 进 `grilling`；想跳过需用户点头（详见 L1 HARD-GATE） |
 | L2 | 改动的影响面 / 回归边界 / 能否写出覆盖测试 | 跑 `codegraph-judge assess` 看 affected flow / test gap，或直接读消费方；**影响面超预期（跨模块/结构性）→ 回去重判级（可能 L1/L0）** |
-| L3 | bug 的**真正根因**（不是症状冒出点） | 留在 `systematic-debugging`，别急着改；**"修复"其实是在加新行为 → 重判级（可能 L2）** |
+| L3 | bug 的真正根因；或隔离新增的消费者/契约边界 | bug 答不上根因就留在 `systematic-debugging`；隔离新增答不上“为何旧路径不受影响”就改按 L2/L1 评估 |
 | L4 | （风险≈0，免） | — |
 
-L0–L3 必须把理解证据写入 `docs/superpowers/.workflow-evidence/`，再运行 `workflow-state.sh understand <仓库相对证据路径>`。证据按 tier 分别包含 architecture 的 `boundaries/migration/rollback`、requirements 的 `acceptance/non_goals`、impact 的 `affected/tests`、root-cause 的 `reproduction/root_cause`；共同要求有且仅有一个 `result: PASS`。通过后先显示：`理解度 = PASS｜类型 = root-cause｜依据 = 稳定复现 + 根因证据`。`tdd`、`review`、`business-verify`、`fidelity-verify` 与 `complete` 都会重新校验 scope/evidence hash，目标、范围、requirements 或证据变化后必须重新理解，不能只改 status。
+L0–L3 必须把理解证据写入 `docs/superpowers/.workflow-evidence/`，再运行 `workflow-state.sh understand <仓库相对证据路径>`。证据按 tier 分别包含 architecture 的 `boundaries/migration/rollback`、requirements 的 `acceptance/non_goals`、impact 的 `affected/tests`、root-cause 的 `reproduction/root_cause`；L3 bug 使用 root-cause，L3 隔离新增使用 impact；共同要求有且仅有一个 `result: PASS`。通过后先显示：`理解度 = PASS｜类型 = root-cause｜依据 = 稳定复现 + 根因证据`，或 `理解度 = PASS｜类型 = impact｜依据 = 隔离入口 + 旧消费者不受影响 + 契约测试`。`tdd`、`review`、`business-verify`、`fidelity-verify` 与 `complete` 都会重新校验 scope/evidence hash，目标、范围、requirements 或证据变化后必须重新理解，不能只改 status。
 
 同一 task/target 发生 L3→L1 等重判时，不重写已通过的根因。新 evidence 仍补齐当前 level 的必需字段，并用 `reuses:` 指向上一份 evidence；controller 会校验稳定 objective、旧 kind 与两个文件 hash：
 
@@ -361,7 +381,7 @@ L4 微调不跑（风险≈0，白跑）。
 
 ## L2 — 中型迭代（轻量 spec → TDD）
 
-**触发条件：** 修改已有逻辑，影响 ≥3 个文件，但不是全新模块。
+**触发条件：** 修改既有共享逻辑、契约或消费者，存在真实回归面，但不是完整新模块/流程。`≥3 文件`只能提示检查影响面，不能单独触发 L2。
 
 **执行步骤：**
 1. 写一段简短的需求说明（不需要完整 brainstorming，3-5 句话描述目标和边界）
@@ -374,13 +394,13 @@ L4 微调不跑（风险≈0，白跑）。
 
 ---
 
-## L3 — Bug 修复（调试优先）
+## L3 — Bug 修复 / 隔离新增（根因或边界优先）
 
-**触发条件：** 线上问题、行为回归、测试失败的已知 bug。
+**触发条件：** 线上问题、行为回归、测试失败的已知 bug；或入口显式、旧消费者/路由完全不变、可用局部契约测试封住回归面的隔离新增。
 
 **执行步骤：**
-1. `systematic-debugging` skill（若可用）— 系统性定位根因，不要凭感觉猜；若不可用，走内置 debugging 协议：复现 → 缩小范围 → 提出根因假设 → 用日志/测试验证假设 → 再修复。
-2. **根因关卡（轻量，见上）** — 写修复前自检：我定位到真正根因了，还是在改症状冒出点？答不上 → 留在 systematic-debugging 别动手；若"修复"其实是加新行为 → 回去重判级（可能 L2）。
+1. bug 使用 `systematic-debugging` 定位根因；隔离新增列出显式入口、旧消费者/路由不变的证据与本地测试边界。
+2. **根因/边界关卡** — bug 自检真正根因；隔离新增自检是否真的没有既有消费者回归面。任何共享契约或旧路径变化都重判 L2/L1。
 3. 写一个能复现 bug 的失败测试（先红）
 4. 修复，让测试变绿
 5. 若修复涉及业务闭环，按「业务闭环验收关卡」补跑守卫、真实请求、错误态演练；缺证据不得标 done
@@ -431,6 +451,9 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 | 情况 | 正确级别 |
 |---|---|
 | 新增一个已有模式的 API 接口 | L2（改已有逻辑，有回归风险） |
+| 新增完全隔离的 provider adapter，显式调用且不进入旧路由 | L3（隔离新增，本地契约测试覆盖） |
+| Kimi adapter：`auto_eligible=false`、旧 provider 路由不变 | L3 |
+| 仅将静态资源路径替换为等价 OSS URL，不改渲染/控制流 | L4（构建 + 资源可达性验证） |
 | 新增全新的问卷流程 | L1（新行为，需要 SDD） |
 | 把多个 store 合并重构 | L0（结构性重组） |
 | 修复某个按钮点击没反应 | L3（bug） |

@@ -107,6 +107,7 @@ git commit -m "feat: add deterministic learning folding"
 
 **Files:**
 - Modify: `tests/workflow-state.sh`
+- Modify: `scripts/workflow-state.sh`
 - Modify: `skills/dev-workflow/SKILL.md`
 - Modify: `README.md`
 
@@ -144,6 +145,8 @@ Update `skills/dev-workflow/SKILL.md` so classification first asks whether there
 
 Define L2 by real existing regression surface rather than `≥3 files`. Preserve high-risk contract gates only when the current task changes that contract.
 
+Also add a failing L3 understanding case with `kind: impact`, then update controller validation so L3 accepts either `root-cause` (`reproduction` + `root_cause`) or `impact` (`affected` + `tests`). Persist the evidence's actual kind; do not change the YAML schema.
+
 - [ ] **Step 4: Add confirmed boundary examples**
 
 Add these rows to the common-boundaries table:
@@ -167,7 +170,7 @@ Expected: both suites print PASS.
 - [ ] **Step 7: Commit the classification contract**
 
 ```bash
-git add skills/dev-workflow/SKILL.md README.md tests/workflow-state.sh
+git add scripts/workflow-state.sh skills/dev-workflow/SKILL.md README.md tests/workflow-state.sh docs/superpowers/specs/2026-07-23-session-scoped-tier-calibration-design.md docs/superpowers/plans/2026-07-23-session-scoped-tier-calibration.md
 git commit -m "feat: calibrate tiers by session impact"
 ```
 

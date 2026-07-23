@@ -502,13 +502,10 @@ write_fresh_state(){
   ACTIVE_TMP=""
 }
 
-understanding_kind_for_level(){
-  case "$1" in
-    L0) printf '%s\n' architecture ;;
-    L1) printf '%s\n' requirements ;;
-    L2) printf '%s\n' impact ;;
-    L3) printf '%s\n' root-cause ;;
-    L4) printf '%s\n' not-required ;;
+understanding_kind_allowed_for_level(){
+  local level="$1" kind="$2"
+  case "$level:$kind" in
+    L0:architecture|L1:requirements|L2:impact|L3:root-cause|L3:impact|L4:not-required) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -550,16 +547,16 @@ reset_confirmation(){
 }
 
 validate_understanding_evidence(){
-  local level="$1" path="$2" expected_kind actual_kind key
-  expected_kind="$(understanding_kind_for_level "$level")" || add_error "无法识别 understanding level: $level"
+  local level="$1" path="$2" actual_kind key required_keys
   require_single_pass_result understanding "$path"
   actual_kind="$(evidence_scalar kind "$path")"
-  [ "$actual_kind" = "$expected_kind" ] || add_error "understanding kind 应为 ${expected_kind}，当前为 ${actual_kind:-空}"
-  case "$level" in
-    L0) required_keys="boundaries migration rollback" ;;
-    L1) required_keys="acceptance non_goals" ;;
-    L2) required_keys="affected tests" ;;
-    L3) required_keys="reproduction root_cause" ;;
+  understanding_kind_allowed_for_level "$level" "$actual_kind" \
+    || add_error "understanding kind 与 ${level} 不匹配，当前为 ${actual_kind:-空}"
+  case "$actual_kind" in
+    architecture) required_keys="boundaries migration rollback" ;;
+    requirements) required_keys="acceptance non_goals" ;;
+    impact) required_keys="affected tests" ;;
+    root-cause) required_keys="reproduction root_cause" ;;
     *) required_keys="" ;;
   esac
   for key in $required_keys; do
@@ -807,7 +804,7 @@ is_execution_phase(){
 }
 
 validate_understanding_gate(){
-  local version level status kind expected_kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope expected_objective current_objective reused_value reused_path reused_kind reused_level reused_sha declared_reuse
+  local version level status kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope expected_objective current_objective reused_value reused_path reused_kind reused_level reused_sha declared_reuse
   version="$(yget completion.workflow_version)"
   [ "$version" != 1 ] || return 0
   level="$(yget level)"
@@ -818,9 +815,9 @@ validate_understanding_gate(){
   fi
   in_list "$level" "L0 L1 L2 L3" || { add_error "understanding gate 缺合法 level"; return; }
   [ "$status" = passed ] || add_error "understanding.status 应为 passed，当前为 ${status:-空}"
-  expected_kind="$(understanding_kind_for_level "$level")"
   kind="$(yget understanding.kind)"
-  [ "$kind" = "$expected_kind" ] || add_error "understanding.kind 应为 ${expected_kind}，当前为 ${kind:-空}"
+  understanding_kind_allowed_for_level "$level" "$kind" \
+    || add_error "understanding.kind 与 ${level} 不匹配，当前为 ${kind:-空}"
   value="$(yget understanding.evidence)"
   if is_empty_value "$value" || ! valid_evidence_reference "$value"; then
     add_error "understanding.evidence 引用非法: ${value:-空}"
@@ -1112,7 +1109,7 @@ case "${1:-}" in
       previous_evidence="$(yget understanding.evidence)"
       previous_evidence_sha="$(yget understanding.evidence_sha256)"
       previous_objective="$(yget understanding.objective_sha256)"
-      expected_kind="$(understanding_kind_for_level "$level")"
+      expected_kind="$(evidence_scalar kind "$path")"
       [ "$previous_status" = passed ] || add_error "reuses 需要已有 passed understanding"
       [ "$previous_kind" != "$expected_kind" ] || add_error "同 kind understanding 不需要 reuses"
       [ "$reuse_value" = "$previous_evidence" ] || add_error "reuses 必须引用上一份 understanding evidence"
@@ -1138,14 +1135,15 @@ case "${1:-}" in
       write_field understanding.reused_evidence ""
       write_field understanding.reused_evidence_sha256 ""
     fi
-    write_field understanding.kind "$(understanding_kind_for_level "$level")"
+    actual_kind="$(evidence_scalar kind "$path")"
+    write_field understanding.kind "$actual_kind"
     write_field understanding.evidence "$value"
     write_field understanding.evidence_sha256 "$(file_sha256 "$path")"
     write_field understanding.scope_sha256 "$(scope_sha256)"
     write_field understanding.objective_sha256 "$(objective_sha256)"
     write_field understanding.status passed
     reset_confirmation pending
-    echo "✓ 理解度 = PASS（kind=$(understanding_kind_for_level "$level")）" ;;
+    echo "✓ 理解度 = PASS（kind=${actual_kind}）" ;;
   confirm)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] confirm <json>"

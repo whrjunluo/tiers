@@ -58,6 +58,7 @@ For this task, both pending `流程/tie-breaker` records—the Kimi adapter and 
 - Update `skills/dev-workflow/SKILL.md` decision tree, tie-breaker, tier definitions, codegraph calibration, and boundary table.
 - Update `README.md` quick reference and examples so the public contract matches the skill.
 - Extend `tests/workflow-state.sh` with assertions for the session-scoped rules and confirmed examples.
+- Allow L3 understanding to use `root-cause` evidence for bugs or `impact` evidence for isolated additions; keep the persisted workflow-state schema unchanged.
 - Extend `tests/learnings.sh` with RED/GREEN coverage for category folding, idempotency, and isolation from unrelated pending records.
 - Keep controller schemas unchanged; classification remains an agent decision rather than a new persisted scoring engine.
 

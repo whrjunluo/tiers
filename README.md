@@ -184,6 +184,8 @@ bash bin/init [--repo <项目路径>] [--yes]
 级别 = L2｜理由 = 改已有逻辑，有回归风险
 ```
 
+判级采用“当前会话初判 → 影响面校准”两阶段：只看本次目标、本任务 base、实际消费者/契约和测试边界。仓库历史复杂度、文件数量、业务关键词或“新增”本身都不能机械触发 L2；检查后证据变化时会自动重判并解释原因。完全隔离、旧路由不变的显式新增可按 L3；只替换等价静态资源路径且运行逻辑不变可按 L4。
+
 如果新会话没有自动判级，通常是 Codex 还没重新加载 skill 索引。先重启 Codex；排查时再临时点名 `dev-workflow`，看 skill 是否已安装成功。
 
 ### 能力模式
@@ -283,7 +285,7 @@ python3 <plugin-root>/scripts/external_agent.py \
 
 业务、请求与保真证据的 `result:` 必须有且仅有一行，内容为 `result: PASS`；仅有非空结果、写入失败结果或同时写入冲突结果都不会通过完成门。请求证据另外记录 `method:`、`url:` 和三位 `status:`，状态码按被验证路径的预期填写，不限定为 2xx。
 
-L0–L3 在进入执行 phase 前还必须通过 `understand`：L0 提交架构边界/迁移/回滚证据，L1 提交需求验收/非目标，L2 提交影响面/测试边界，L3 提交稳定复现/根因。状态保存 scope 与 evidence SHA-256，手改 `status` 或替换证据不能绕过。Goal 模式只接管用户已创建的目标；objective 原文不落盘，相同目标续行复用有效理解度，目标变化会重置为 `pending`。
+L0–L3 在进入执行 phase 前还必须通过 `understand`：L0 提交架构边界/迁移/回滚证据，L1 提交需求验收/非目标，L2 提交影响面/测试边界；L3 bug 提交稳定复现/根因，L3 隔离新增提交影响面/测试边界。状态保存 scope 与 evidence SHA-256，手改 `status` 或替换证据不能绕过。Goal 模式只接管用户已创建的目标；objective 原文不落盘，相同目标续行复用有效理解度，目标变化会重置为 `pending`。
 
 同一 task/target 从 L3 重判 L1 时，新 requirements evidence 可用 `reuses:` 引用原 root-cause，controller 会校验 objective 与两个 evidence hash。符合“稳定复现、单目标、预计生产改动 ≤3 文件、无 API/schema/权限/迁移/跨端时序变化”的任务可显式设置 `execution.profile small-fix`：保留 root-cause、Red/Green 和真实业务验收，只省略重复 spec/plan、重复全量四连，并允许有效单 reviewer 以 degraded evidence 收尾。business verify 未完成仍不得称 done/ship，但不阻塞已通过目标测试的本地 checkpoint commit。
 
@@ -294,10 +296,10 @@ Goal 模式还要求自治确认：AI 依次作为提案者、反方审查者和
 | 级别 | 典型场景 | 工作流 |
 |---|---|---|
 | **L0** 大型改造 | 跨模块重构、架构迁移 | 范围审视 → 架构验证 → 实现 → QA → 发布 |
-| **L1** 大功能 | 新增模块 / 跨文件设计 | brainstorm → spec → grilling → plan → TDD → review |
-| **L2** 中型迭代 | 改已有逻辑，≥3 文件 | 轻量 spec → TDD → 条件评审；高风险业务闭环强制状态/外部评审/证据门 |
-| **L3** Bug 修复 | 线上回归 / 行为问题 | 系统性调试 → 复现测试 → 修复 |
-| **L4** 文案/样式 | 纯 UI 文字 / 样式 | 直接写，无需 spec 或测试 |
+| **L1** 大功能 | 完整新模块 / 用户流程 / 跨模块编排 | brainstorm → spec → grilling → plan → TDD → review |
+| **L2** 中型迭代 | 改既有共享逻辑、契约或消费者 | 轻量 spec → TDD → 条件评审；高风险业务闭环强制状态/外部评审/证据门 |
+| **L3** Bug / 隔离新增 | 线上回归，或旧消费者与旧路由完全不变的显式新增 | 根因/影响边界 → Red/Green 契约测试 → 修复或实现 |
+| **L4** 无逻辑变化 | 文案、样式、等价静态资源路径替换 | 直接修改；按需做构建/资源可达性验证 |
 
 ## codegraph 集成（可选，三层降级）
 
