@@ -361,6 +361,8 @@ def validate_artifact(data: Any, context: ValidationContext) -> list:
         errors.append("artifact_sha256 must be a lowercase SHA-256")
     if not _valid_sha(data.get("prompt_sha256")):
         errors.append("prompt_sha256 must be a lowercase SHA-256")
+    elif data.get("prompt_sha256") != data.get("artifact_sha256"):
+        errors.append("platform prompt hash does not match external review artifact")
 
     profile = data.get("review_profile")
     if not isinstance(profile, str) or profile not in ALLOWED_PROFILES:
