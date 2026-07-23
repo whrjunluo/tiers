@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
   | bash -s -- --codex
 ```
 
-当前 stable release 为 `v0.11.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
+当前 stable release 为 `v0.12.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
 
 如果 `~/.local/bin` 不在 `PATH`，安装器会给出提示；加入后可在任意目录运行 `dev-workflow`。装完**重启 Codex 或新开会话**。加 `--install-deps` 会一并安装可脚本化的伴侣 skill：
 
