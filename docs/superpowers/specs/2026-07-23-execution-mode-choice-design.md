@@ -12,7 +12,7 @@ Add a plan-time execution choice with a conservative Hybrid policy:
 - `multi-agent`: run independent ready tasks in parallel; read-only workers may share the frozen integration checkout, while every write worker uses its own worktree/branch.
 - `goal`: preserve existing Goal behavior and never reinterpret it as multi-agent.
 
-The choice happens once after understanding and plan are ready, immediately before TDD/execution. The controller reports the recommendation and evidence. It does not repeatedly ask unless the plan/scope hash changes or the selected mode becomes invalid.
+The initial choice happens once after understanding and plan are ready, immediately before TDD/execution. The controller reports the recommendation and evidence. It does not repeatedly ask unless the plan/scope hash changes or the selected mode becomes invalid. The only post-selection change is a host-recorded multi-agent-to-single fallback during `phase=tdd` with a non-empty `execution.fallback_reason`.
 
 ## Eligibility and Safety
 
@@ -33,6 +33,7 @@ Workers must not modify the integration controller, suspend/resume state, releas
 Keep the existing YAML state shape and add scalar fields:
 
 - `execution.mode: single | multi-agent | goal`
+- `execution.choice_status: undecided | selected` (the initial plan-stage choice is immutable after selection)
 - `execution.plan_sha256`: hash of the approved plan/manifest input
 - `execution.max_workers`: positive integer, default 2
 - `execution.fallback_reason`: host explanation when multi-agent is unavailable or downgraded

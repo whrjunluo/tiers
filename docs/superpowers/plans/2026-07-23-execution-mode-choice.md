@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - `execution.mode` remains `single | multi-agent | goal`; Goal behavior is unchanged.
+- `execution.choice_status` remains `undecided | selected`; the initial plan-stage choice is one-time.
 - Selection happens after understanding and plan, before TDD; mode is not repeatedly requested unless plan/scope changes.
 - Multi-agent requires at least two ready tasks, satisfied dependencies, explicit write sets or read-only tasks, disjoint writes, frozen base/plan hashes, worker slots, and isolated write worktrees.
 - L4, L3 small-fix, one-task plans, same-file/shared schema/migration/lock/config changes, release/deploy/credential/destructive work, and unknown write sets default to single.
@@ -97,7 +98,7 @@ Add `execution.plan_sha256`, `execution.max_workers: 2`, `execution.fallback_rea
 
 - [ ] **Step 4: Implement `choose-execution`**
 
-For `single`, require a non-sealed state, phase `plan|tdd`, clear multi-agent fields, and print the selected mode. For `multi-agent`, require phase `plan`, an existing plan artifact, validate the manifest with the current `execution.base_revision` and plan file SHA-256, then persist the manifest path, plan SHA-256, and manifest worker limit. Reject Goal mode and all invalid manifests fail-closed.
+For initial `single`, require a non-sealed state, phase `plan`, and an undecided choice; clear multi-agent fields and print the selected mode. For `multi-agent`, require the same one-time plan-stage choice, an existing plan artifact, validate the manifest with the current `execution.base_revision` and plan file SHA-256, then persist the manifest path, plan SHA-256, and manifest worker limit. Reject Goal mode and all invalid manifests fail-closed. Permit only a phase=tdd multi-agent-to-single fallback with a non-empty reason.
 
 - [ ] **Step 5: Enforce mode during check/execution**
 
