@@ -20,7 +20,7 @@ spec.loader.exec_module(contract)
 
 FINGERPRINT = "a" * 64
 ARTIFACT = "b" * 64
-PROMPT = "c" * 64
+PROMPT = ARTIFACT
 REFERENCE = "2026-07-22T01:00:00Z"
 CREATED = "2026-07-22T00:59:00Z"
 ROLES = ("correctness-regression", "security-degradation")
@@ -172,6 +172,10 @@ class PlatformReviewContractTest(unittest.TestCase):
             repository_root=self.repo,
         )
         self.assertEqual(self.errors(), [])
+
+    def test_platform_prompt_must_bind_to_the_external_review_artifact(self):
+        self.report["prompt_sha256"] = "c" * 64
+        self.assert_error("platform prompt hash does not match external review artifact")
 
     def test_requires_two_unique_non_root_agents_models_and_roles(self):
         cases = [

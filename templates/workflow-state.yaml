@@ -11,6 +11,10 @@ context:
 execution:
   mode: single
   profile: standard # standard | small-fix
+  choice_status: undecided # undecided | selected
+  plan_sha256: ""
+  choice_reset_reason: ""
+  fallback_reason: ""
   objective_sha256: ""
   continuation: 0
   base_revision: ""

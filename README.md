@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/whrjunluo/tiers/main/install.sh \
   | bash -s -- --codex
 ```
 
-当前 stable release 为 `v0.11.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
+当前 stable release 为 `v0.12.0`。默认安装最新 `v<major>.<minor>.<patch>` stable release，不需要 clone 仓库或进入固定目录。安装器把版本放在 `~/.local/share/dev-workflow/`，把全局命令链接到 `~/.local/bin/dev-workflow`，并注册 Codex 本地 marketplace、启用插件和四个内置 skill。全程不使用 `sudo`，也不会自动修改 shell 启动文件。
 
 如果 `~/.local/bin` 不在 `PATH`，安装器会给出提示；加入后可在任意目录运行 `dev-workflow`。装完**重启 Codex 或新开会话**。加 `--install-deps` 会一并安装可脚本化的伴侣 skill：
 
@@ -262,7 +262,15 @@ python3 <plugin-root>/scripts/external_agent.py \
 
 `--progress jsonl` 默认把 `cross_review_started`、`review_started`、`review_finished`、`policy_satisfied`、`cross_review_terminated` 和 `cross_review_finished` 实时写到 stderr；stdout 只保留最终 JSON/文本，因此可继续重定向为完成证据。进度事件不改变 quorum 或降级规则。失败、取消和用户终止也输出带 reviewer status/耗时的机器可读证据；用户要求停止时立即终止，保存 `outcome=terminated` 证据，不继续后续 review 门禁。完成门只接受 24 小时内且仍匹配当前仓库的报告。`--context git` 会发送当前 staged/unstaged diff；不要包含密钥、`.env`、完整敏感 payload 或无关私有文件。
 
-外部 standard 评审正常失败后，平台 host 才能用两个不同模型的只读子代理形成正式 fallback。两个 reviewer 必须共享同一 repository fingerprint、artifact hash 和 prompt hash，分别使用 `correctness-regression` / `security-degradation` 角色；报告引用外部失败文件及其 SHA-256，并通过 `scripts/platform_review_contract.py` 校验。`external_agent.py` 本身不会静默启动平台子代理，平台调度与裁决由 host 负责。
+外部 standard 评审正常失败后，平台 host 才能用两个不同模型的只读子代理形成正式 fallback。两个 reviewer 必须共享同一 repository fingerprint 与外部评审 prompt artifact hash（平台 `prompt_sha256` 必须等于该 artifact hash），分别使用 `correctness-regression` / `security-degradation` 角色；报告引用外部失败文件及其 SHA-256，并通过 `scripts/platform_review_contract.py` 校验。`external_agent.py` 本身不会静默启动平台子代理，平台调度与裁决由 host 负责。
+
+### Plan 后选择执行方式
+
+在 plan 已完成、理解度通过、且尚未开始 TDD 测试时，host 只进行一次 `choose-execution`：向用户展示 `single` 和 `multi-agent`、说明推荐及依据，然后运行 `workflow-state.sh choose-execution <single|multi-agent>`。选择绑定当前 plan SHA-256；plan 改变时，使用 `workflow-state.sh choose-execution reset "<audit reason>"` 回到 plan 后重新选择。没有 plan 的 L2/L3 短任务和 L4 保持 `mode=single`、`choice_status=undecided` 的兼容路径。
+
+`multi-agent` 是 **宿主原生优先**：Codex 或 Claude Code 负责实际的子代理、模型策略、worktree 隔离、结果收集与清理；插件只记录用户选择和 plan 绑定，不创建 manifest、worktree、branch 或 worker 生命周期。集成会话负责最终 diff、冲突处理、测试、review 和完成证据。依赖强、并行收益不明确或宿主不能隔离的任务默认选择 `single`。
+
+原生能力不可用、失败或被用户禁用时，host 仅在 `phase=tdd` 运行 `workflow-state.sh choose-execution single "<fallback reason>"`，明确回退为当前会话顺序执行。外部 CLI 委派仍需显式授权；共享 checkout 的外部委派不能描述为隔离的并行写入。
 
 ## 脚本路径
 

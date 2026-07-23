@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
-# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
+# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent|reset> [reason]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
 set -euo pipefail
 # 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -20,10 +20,11 @@ VALID_LEVELS="L0 L1 L2 L3 L4"
 VALID_BOOLEANS="true false"
 VALID_ENVIRONMENTS="real mock n/a"
 VALID_PROFILES="standard small-fix"
+VALID_CHOICE_STATUSES="undecided selected"
 VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
 VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
 VALID_CONFIRMATION_STATUSES="pending passed blocked"
-VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.checkpoint requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
+VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.choice_status execution.checkpoint execution.plan_sha256 execution.choice_reset_reason execution.fallback_reason requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
 SNAPSHOT_TMP_YAML=""
 SNAPSHOT_TMP_META=""
 ACTIVE_TMP=""
@@ -102,7 +103,7 @@ yget(){ yget_file "$STATE" "$1"; }
 encode_yaml_scalar(){
   local field="$1" value="$2"
   case "$field" in
-    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.continuation|understanding.status|confirmation.mode|confirmation.status)
+    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.choice_status|execution.continuation|understanding.status|confirmation.mode|confirmation.status)
       printf '%s\n' "$value"
       ;;
     *)
@@ -169,9 +170,14 @@ ensure_schema(){
   append_template_section understanding
   append_template_section confirmation
   append_template_section requirements
+  append_template_section artifacts
   append_template_section evidence
   append_template_section completion
   ensure_nested_field execution profile standard
+  ensure_nested_field execution choice_status undecided
+  ensure_nested_field execution plan_sha256 '""'
+  ensure_nested_field execution choice_reset_reason '""'
+  ensure_nested_field execution fallback_reason '""'
   ensure_nested_field understanding objective_sha256 '""'
   ensure_nested_field understanding reused_kind '""'
   ensure_nested_field understanding reused_evidence '""'
@@ -246,6 +252,23 @@ print(candidate)
 PY
 }
 
+artifact_path(){
+  local value="$1"
+  python3 - "$REPO" "$value" <<'PY'
+from pathlib import Path
+import sys
+
+repo = Path(sys.argv[1]).resolve()
+value = Path(sys.argv[2])
+if value.is_absolute():
+    raise SystemExit(1)
+candidate = (repo / value).resolve()
+if candidate == repo or repo not in candidate.parents:
+    raise SystemExit(1)
+print(candidate)
+PY
+}
+
 valid_evidence_reference(){
   local value="$1"
   case "$value" in
@@ -268,7 +291,10 @@ requirements_sha256(){
 
 scope_sha256(){
   {
-    for field in task level context.target context.sources requirements.business requirements.fidelity requirements.external_review execution.mode execution.objective_sha256 context.branch execution.base_revision; do
+    # Execution choice is an execution preference, not a change in what the
+    # task means. Selecting single vs multi-agent must not invalidate the
+    # already-passed requirements understanding scope.
+    for field in task level context.target context.sources requirements.business requirements.fidelity requirements.external_review execution.objective_sha256 context.branch execution.base_revision; do
       printf '%s\0%s\0' "$field" "$(yget "$field")"
     done
   } | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
@@ -301,6 +327,53 @@ canonical_repo_root(){
 }
 
 repository_sha256(){ text_sha256 "$(canonical_repo_root)"; }
+base_revision_sha256(){ text_sha256 "$(yget execution.base_revision)"; }
+
+reset_execution_choice(){
+  local fallback_reason="${1:-}"
+  write_field execution.mode single
+  write_field execution.plan_sha256 ""
+  write_field execution.fallback_reason "$fallback_reason"
+}
+
+bind_execution_plan(){
+  local plan_value plan_path
+  plan_value="$(yget artifacts.plan)"
+  plan_path="$(artifact_path "$plan_value")" || die "artifacts.plan 必须是 repository 内现存的 regular file"
+  [ -f "$plan_path" ] && [ ! -L "$plan_path" ] || die "artifacts.plan 必须是 repository 内现存的 regular file"
+  write_field execution.plan_sha256 "$(file_sha256 "$plan_path")"
+}
+
+validate_execution_choice_gate(){
+  local mode choice level plan_value plan_path current_plan_sha bound_plan_sha sealed_at
+  sealed_at="$(yget completion.completed_at)"
+  # Sealed states are historical records. They are not retroactively forced
+  # through a newly introduced plan-time choice gate.
+  if ! is_empty_value "$sealed_at"; then return 0; fi
+  mode="$(yget execution.mode)"
+  [ "$mode" != goal ] || return 0
+  choice="$(yget execution.choice_status)"
+  level="$(yget level)"
+  plan_value="$(yget artifacts.plan)"
+  if is_empty_value "$plan_value"; then
+    if [ "$level" = L2 ] || [ "$level" = L3 ] || [ "$level" = L4 ]; then
+      [ "$mode" = single ] || add_error "无 plan 的 legacy short task 只能使用 implicit single"
+      [ "$choice" = undecided ] || add_error "无 plan 的 legacy short task 不应伪造 selected execution choice"
+    else
+      add_error "进入执行阶段前必须存在 artifacts.plan 并完成 execution choice"
+    fi
+    return
+  fi
+  if ! plan_path="$(artifact_path "$plan_value")" || [ ! -f "$plan_path" ] || [ -L "$plan_path" ]; then
+    add_error "artifacts.plan 必须是 repository 内现存的 regular file"
+    return
+  fi
+  [ "$choice" = selected ] || add_error "有 plan 的任务进入执行阶段前必须完成 execution choice"
+  current_plan_sha="$(file_sha256 "$plan_path")"
+  bound_plan_sha="$(yget execution.plan_sha256)"
+  [ "$bound_plan_sha" = "$current_plan_sha" ] || add_error "execution choice 绑定的 plan 已变化，请执行 choose-execution reset <reason> 后重新选择"
+  in_list "$mode" "single multi-agent" || add_error "execution.mode 非法: $mode"
+}
 
 validate_snapshot_key(){
   local key="${1:-}"
@@ -360,9 +433,19 @@ state_structure_valid(){
   value="$(yget_file "$file" phase)"; is_empty_value "$value" || in_list "$value" "$VALID_PHASES" || return 1
   value="$(yget_file "$file" level)"; is_empty_value "$value" || in_list "$value" "$VALID_LEVELS" || return 1
   value="$(yget_file "$file" context.environment)"; is_empty_value "$value" || in_list "$value" "$VALID_ENVIRONMENTS" || return 1
-  value="$(yget_file "$file" execution.mode)"; is_empty_value "$value" || in_list "$value" "single goal" || return 1
+  value="$(yget_file "$file" execution.mode)"; is_empty_value "$value" || in_list "$value" "single multi-agent goal" || return 1
+  value="$(yget_file "$file" execution.choice_status)"; is_empty_value "$value" || in_list "$value" "$VALID_CHOICE_STATUSES" || return 1
+  if [ "$(yget_file "$file" execution.mode)" != goal ]; then
+    case "$(yget_file "$file" execution.choice_status):$(yget_file "$file" execution.mode)" in
+      undecided:single|selected:single|selected:multi-agent) ;;
+      *) return 1 ;;
+    esac
+  fi
   value="$(yget_file "$file" execution.profile)"; is_empty_value "$value" || in_list "$value" "$VALID_PROFILES" || return 1
   value="$(yget_file "$file" execution.continuation)"; printf '%s\n' "$value" | grep -qE '^[0-9]+$' || return 1
+  if [ "$(yget_file "$file" execution.choice_status)" = selected ] && ! is_empty_value "$(yget_file "$file" artifacts.plan)"; then
+    value="$(yget_file "$file" execution.plan_sha256)"; printf '%s\n' "$value" | grep -qE '^[0-9a-f]{64}$' || return 1
+  fi
   for field in requirements.business requirements.fidelity requirements.external_review; do
     value="$(yget_file "$file" "$field")"
     is_empty_value "$value" || in_list "$value" "$VALID_BOOLEANS" || return 1
@@ -378,13 +461,15 @@ state_is_empty_slot(){
   state_structure_valid "$file" || return 1
   [ "$(yget_file "$file" context.repo)" = "$(canonical_repo_root)" ] || return 1
   [ "$(yget_file "$file" execution.mode)" = single ] || return 1
+  [ "$(yget_file "$file" execution.choice_status)" = undecided ] || return 1
   [ "$(yget_file "$file" execution.profile)" = standard ] || return 1
   [ "$(yget_file "$file" execution.continuation)" = 0 ] || return 1
   [ "$(yget_file "$file" understanding.status)" = pending ] || return 1
   [ "$(yget_file "$file" confirmation.status)" = pending ] || return 1
   [ "$(yget_file "$file" completion.workflow_version)" = 2 ] || return 1
   for field in task level phase context.target context.sources context.environment context.delivery \
-    execution.objective_sha256 execution.checkpoint understanding.kind understanding.evidence \
+    execution.plan_sha256 execution.choice_reset_reason execution.fallback_reason execution.objective_sha256 execution.checkpoint \
+    understanding.kind understanding.evidence \
     understanding.evidence_sha256 understanding.scope_sha256 understanding.objective_sha256 \
     understanding.reused_kind understanding.reused_evidence understanding.reused_evidence_sha256 \
     confirmation.mode confirmation.evidence confirmation.decision_sha256 artifacts.spec artifacts.plan \
@@ -417,6 +502,7 @@ state_is_unfinished(){
       errors=""
       validate_understanding_gate
       validate_confirmation_gate
+      validate_execution_choice_gate
       [ -z "$errors" ]
     ) || return 1
   fi
@@ -804,7 +890,7 @@ is_execution_phase(){
 }
 
 validate_understanding_gate(){
-  local version level status kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope expected_objective current_objective reused_value reused_path reused_kind reused_level reused_sha declared_reuse
+  local version level status kind value path expected_evidence_sha current_evidence_sha expected_scope current_scope expected_objective current_objective reused_value reused_path reused_kind reused_level reused_sha declared_reuse sealed_at
   version="$(yget completion.workflow_version)"
   [ "$version" != 1 ] || return 0
   level="$(yget level)"
@@ -837,7 +923,10 @@ validate_understanding_gate(){
   [ "$expected_evidence_sha" = "$current_evidence_sha" ] || add_error "understanding evidence 内容已变化"
   expected_scope="$(yget understanding.scope_sha256)"
   current_scope="$(scope_sha256)"
-  [ "$expected_scope" = "$current_scope" ] || add_error "understanding scope 已变化，需重新评估"
+  sealed_at="$(yget completion.completed_at)"
+  if is_empty_value "$sealed_at"; then
+    [ "$expected_scope" = "$current_scope" ] || add_error "understanding scope 已变化，需重新评估"
+  fi
   expected_objective="$(yget understanding.objective_sha256)"
   current_objective="$(objective_sha256)"
   [ "$expected_objective" = "$current_objective" ] || add_error "understanding objective 已变化，需重新评估"
@@ -899,6 +988,7 @@ validate_completion(){
   errors=""
   validate_understanding_gate
   validate_confirmation_gate
+  validate_execution_choice_gate
   for field in task level context.repo context.branch context.target context.sources context.environment context.delivery; do
     require_value "$field"
   done
@@ -1079,6 +1169,77 @@ case "${1:-}" in
       reuse="$(yget understanding.status)"
     fi
     echo "✓ 目标续行 = 第 $(yget execution.continuation) 次｜phase = $(yget phase)｜理解度 = $reuse" ;;
+  choose-execution)
+    [ -f "$STATE" ] || die "状态文件不存在，先 init"
+    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] choose-execution <single|multi-agent|reset> [reason]"
+    sealed_at="$(yget completion.completed_at)"
+    is_empty_value "$sealed_at" || die "任务已封存；不得选择 execution mode"
+    [ "$(yget execution.mode)" != goal ] || die "Goal mode 不支持 choose-execution"
+    choice="$2"
+    phase="$(yget phase)"
+    case "$choice" in
+      single)
+        if [ "$(yget execution.mode)" = multi-agent ]; then
+          [ "$phase" = tdd ] || die "multi-agent 回退 single 只能在 phase=tdd 时执行，当前为 ${phase:-空}"
+          [ "$#" -eq 3 ] || die "multi-agent 回退 single 必须提供非空 fallback reason"
+          fallback_reason="$3"
+          printf '%s' "$fallback_reason" | grep -q '[^[:space:]]' || die "multi-agent 回退 single 必须提供非空 fallback reason"
+          reset_execution_choice "$fallback_reason"
+          bind_execution_plan
+          write_field execution.choice_status selected
+          echo "✓ execution mode = single（fallback=${fallback_reason}）"
+        else
+          [ "$(yget execution.choice_status)" = undecided ] || die "execution choice 已完成；plan 阶段不得重复选择"
+          [ "$#" -eq 2 ] || die "初始 single choice 不接受额外参数"
+          legacy_choice=false
+          if [ "$phase" = plan ]; then
+            :
+          elif is_execution_phase "$phase" && is_empty_value "$(yget execution.plan_sha256)"; then
+            legacy_choice=true
+          else
+            die "初始 single choice 只能在 phase=plan 时执行，当前为 ${phase:-空}"
+          fi
+          if ! plan_path="$(artifact_path "$(yget artifacts.plan)")" || [ ! -f "$plan_path" ] || [ -L "$plan_path" ]; then
+            die "初始 execution choice 需要现存的 artifacts.plan"
+          fi
+          reset_execution_choice
+          bind_execution_plan
+          if [ "$legacy_choice" = true ]; then
+            write_field execution.choice_reset_reason "legacy planned task migration: explicit single"
+          fi
+          write_field execution.choice_status selected
+          echo "✓ execution mode = single"
+        fi ;;
+      multi-agent)
+        [ "$#" -eq 2 ] || die "用法: workflow-state.sh [--repo R] choose-execution multi-agent"
+        [ "$(yget execution.choice_status)" = undecided ] || die "execution choice 已完成；不得切换为 multi-agent"
+        [ "$phase" = plan ] || die "multi-agent 只能在 phase=plan 时选择，当前为 ${phase:-空}"
+        bind_execution_plan
+        write_field execution.mode multi-agent
+        write_field execution.fallback_reason ""
+        write_field execution.choice_status selected
+        echo "✓ execution mode = multi-agent（host native dispatch）" ;;
+      reset)
+        [ "$#" -eq 3 ] || die "choose-execution reset 必须提供非空 audit reason"
+        [ "$(yget execution.choice_status)" = selected ] || die "只有已选择的 execution mode 才能 reset"
+        [ "$phase" = plan ] || [ "$phase" = tdd ] || die "execution choice reset 只能在 phase=plan/tdd 时执行"
+        reset_reason="$3"
+        printf '%s' "$reset_reason" | grep -q '[^[:space:]]' || die "execution choice reset 必须提供非空 audit reason"
+        if ! plan_path="$(artifact_path "$(yget artifacts.plan)")" || [ ! -f "$plan_path" ] || [ -L "$plan_path" ]; then
+          die "execution choice reset 需要现存的 artifacts.plan"
+        fi
+        current_plan_sha="$(file_sha256 "$plan_path")"
+        if [ "$(yget execution.plan_sha256)" = "$current_plan_sha" ]; then
+          die "plan 未变化，不允许 reset execution choice"
+        fi
+        reset_execution_choice "$reset_reason"
+        write_field execution.choice_reset_reason "$reset_reason"
+        write_field execution.choice_status undecided
+        [ "$phase" = plan ] || write_field phase plan
+        echo "✓ execution choice 已 reset（reason=${reset_reason}）" ;;
+      *) die "非法 execution mode ${choice}（允许: single multi-agent）" ;;
+    esac
+    ;;
   understand)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] understand <evidence>"
@@ -1183,6 +1344,7 @@ case "${1:-}" in
         errors=""
         validate_understanding_gate
         validate_confirmation_gate
+        validate_execution_choice_gate
         [ -z "$errors" ] || die "执行硬门未通过: $errors"
       fi
     fi
@@ -1191,6 +1353,10 @@ case "${1:-}" in
       requirements.*) in_list "$value" "$VALID_BOOLEANS" || die "$field 只能是 true/false" ;;
       context.environment) in_list "$value" "$VALID_ENVIRONMENTS" || die "$field 只能是 real/mock/n/a" ;;
       execution.profile) in_list "$value" "$VALID_PROFILES" || die "$field 只能是 standard/small-fix" ;;
+      execution.choice_status) die "execution.choice_status 只能由 choose-execution 更新" ;;
+      execution.fallback_reason) die "execution.fallback_reason 只能由 choose-execution 的 fallback/reset 命令写入" ;;
+      execution.choice_reset_reason) die "$field 只能由 choose-execution 更新" ;;
+      execution.plan_sha256) die "execution.plan_sha256 只能由 choose-execution 更新" ;;
     esac
     write_field "$field" "$value"
     if [ "$field" = level ]; then
@@ -1221,7 +1387,7 @@ case "${1:-}" in
     ph="$(yget phase)"; is_empty_value "$ph" || in_list "$ph" "$VALID_PHASES" || die "phase 非法: $ph"
     lv="$(yget level)"; is_empty_value "$lv" || in_list "$lv" "$VALID_LEVELS" || die "level 非法: $lv"
     env="$(yget context.environment)"; is_empty_value "$env" || in_list "$env" "$VALID_ENVIRONMENTS" || die "context.environment 非法: $env"
-    execution_mode="$(yget execution.mode)"; is_empty_value "$execution_mode" || in_list "$execution_mode" "single goal" || die "execution.mode 非法: $execution_mode"
+    execution_mode="$(yget execution.mode)"; is_empty_value "$execution_mode" || in_list "$execution_mode" "single multi-agent goal" || die "execution.mode 非法: $execution_mode"
     execution_profile="$(yget execution.profile)"; is_empty_value "$execution_profile" || in_list "$execution_profile" "$VALID_PROFILES" || die "execution.profile 非法: $execution_profile"
     continuation="$(yget execution.continuation)"; printf '%s\n' "$continuation" | grep -qE '^[0-9]+$' || die "execution.continuation 非法: $continuation"
     for field in requirements.business requirements.fidelity requirements.external_review; do
@@ -1242,9 +1408,10 @@ case "${1:-}" in
       errors=""
       validate_understanding_gate
       validate_confirmation_gate
+      validate_execution_choice_gate
       [ -z "$errors" ] || die "执行硬门未通过: $errors"
     fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
-  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
+  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent|reset> [reason]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
 esac

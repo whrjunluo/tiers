@@ -369,11 +369,13 @@ L4 微调不跑（风险≈0，白跑）。
 3. **`grilling` skill（理解度不足时触发，本插件内置；`grill-me` 保留为显式调用兼容入口）** — 对着设计文档追问，逐个解决决策树分支、暴露边界情况，把答案回填进文档，理解收敛达标才退出。
    > 内置 `grilling` 是零依赖基线。若用户自行装了更强的追问 skill（如 `mattpocock/skills` 的 `grill-with-docs`，锚定 CONTEXT.md/ADR、边问边更新文档），则优先用它。
 4. `writing-plans` skill（若可用）— 基于已收敛的设计文档写 plan 到 `docs/superpowers/plans/`。若不可用，执行内置 plan 协议：列文件影响面、逐任务写 Red/Green/Refactor 步骤、每步给命令和验收点。
-5. `test-driven-development` skill（若可用）— 先写失败测试，再实现，测试通过后提交。若不可用，执行内置 TDD 协议：先写最小失败测试并确认失败原因正确，再写实现，最后跑目标测试和全量测试。
-6. `requesting-code-review` skill（若可用）— 请求代码审查；随后按「对抗评审关卡」选择 provider。若 review skill 不可用，执行内置 review checklist：检查行为回归、缺失测试、安装/降级路径、文档承诺是否与实现一致。
-7. 若涉及业务闭环，按「业务闭环验收关卡」完成真实请求与守卫演练；缺证据不得标 done。
-8. `verification-before-completion` skill（若可用）— 验证功能符合 spec 后关闭任务。若不可用，执行内置 verification checklist：重跑相关测试、演练缺依赖场景、确认 README/skill/脚本口径一致。
-9. 写入本地证据文件及 `evidence.*` 字段，运行 `workflow-state.sh complete`；未通过完成门则保持当前 phase。
+5. **计划后的执行方式选择（一次）** — plan 完成、理解度通过后、开始任何 TDD 测试之前，host 向用户展示 `single` 与 `multi-agent`，给出推荐和可核查依据；使用 `workflow-state.sh choose-execution <single|multi-agent>` 记录。初始选择只在 plan 阶段发生，并绑定当前 plan hash；plan 改变时用 `workflow-state.sh choose-execution reset "<audit reason>"` 回到 plan 后重新选择。没有 plan 的 L2/L3 短任务和 L4 保留 implicit single；小任务或相互依赖的改动默认推荐 `single`。
+6. **原生优先交接与回退** — 选择 `multi-agent` 时，host 优先使用 Codex/Claude Code 的原生子代理、模型策略与 worktree 隔离；插件不创建 worktree、branch、worker manifest，不跟踪 worker 生命周期，也不负责 merge 或 cleanup。集成会话仍负责最终 diff、冲突处理、测试与完成证据。原生能力不可用、失败或用户禁用时，host 在 `phase=tdd` 用 `workflow-state.sh choose-execution single "<fallback reason>"` 明确回退为当前会话顺序执行。外部 CLI 委派仍须显式授权，shared-checkout 委派不得描述为隔离并行写入。
+7. `test-driven-development` skill（若可用）— 先写失败测试，再实现，测试通过后提交。若不可用，执行内置 TDD 协议：先写最小失败测试并确认失败原因正确，再写实现，最后跑目标测试和全量测试。
+8. `requesting-code-review` skill（若可用）— 请求代码审查；随后按「对抗评审关卡」选择 provider。若 review skill 不可用，执行内置 review checklist：检查行为回归、缺失测试、安装/降级路径、文档承诺是否与实现一致。
+9. 若涉及业务闭环，按「业务闭环验收关卡」完成真实请求与守卫演练；缺证据不得标 done。
+10. `verification-before-completion` skill（若可用）— 验证功能符合 spec 后关闭任务。若不可用，执行内置 verification checklist：重跑相关测试、演练缺依赖场景、确认 README/skill/脚本口径一致。
+11. 写入本地证据文件及 `evidence.*` 字段，运行 `workflow-state.sh complete`；未通过完成门则保持当前 phase。
 
 > L0 的范围审视/架构验证阶段同样可以用 `grilling` 追问设计；L2 只有轻量 spec，一般不必；L3/L4 无设计文档，跳过。
 

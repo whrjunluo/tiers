@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+
+[ ! -e "$HERE/../scripts/execution_manifest.py" ] || {
+  echo "FAIL: execution manifest runtime must not exist" >&2
+  exit 1
+}
 DEV_WORKFLOW_STATE_LOCK_ROOT="$(mktemp -d)"
 export DEV_WORKFLOW_STATE_LOCK_ROOT
 trap 'rm -rf "$DEV_WORKFLOW_STATE_LOCK_ROOT"' EXIT
