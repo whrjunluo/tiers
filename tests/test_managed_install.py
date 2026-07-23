@@ -149,6 +149,7 @@ class CandidateAndActivationTests(unittest.TestCase):
             "skills/external-agent/SKILL.md",
             "skills/grill-me/SKILL.md",
             "skills/grilling/SKILL.md",
+            "assets/kimi-readonly-reviewer.md",
         ):
             path = candidate / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +188,11 @@ class CandidateAndActivationTests(unittest.TestCase):
                 (candidate / f"skills/{skill}/SKILL.md").unlink()
                 with self.assertRaisesRegex(ManagedInstallError, "required file"):
                     manager.validate_candidate(candidate, self.revision)
+
+        candidate = self.make_candidate(name="candidate-missing-kimi-profile")
+        (candidate / "assets/kimi-readonly-reviewer.md").unlink()
+        with self.assertRaisesRegex(ManagedInstallError, "required file"):
+            manager.validate_candidate(candidate, self.revision)
 
     def test_lock_fails_immediately_when_an_update_is_in_progress(self):
         manager = ManagedInstaller(self.paths, "https://example.test/tiers.git")

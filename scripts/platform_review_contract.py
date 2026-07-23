@@ -33,6 +33,7 @@ EXTERNAL_AGENT_FAMILIES = {
     "grok": "xai",
     "opencode": "configurable",
     "antigravity": "google",
+    "kimi": "configurable",
 }
 
 

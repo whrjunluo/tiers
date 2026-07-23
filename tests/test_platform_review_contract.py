@@ -312,6 +312,13 @@ class PlatformReviewContractTest(unittest.TestCase):
         self.write_external()
         self.assert_error("external attempt reviewer family is invalid")
 
+    def test_accepts_kimi_as_configurable_external_reviewer(self):
+        self.external["selection"]["selected_reviewers"][1] = "kimi"
+        self.external["reviewers"][1]["agent"] = "kimi"
+        self.external["reviewers"][1]["family"] = "configurable"
+        self.write_external()
+        self.assertEqual(self.errors(), [])
+
     def test_rejects_attempt_path_sha_and_file_safety_failures(self):
         self.report["external_attempt"]["sha256"] = "d" * 64
         self.assert_error("external attempt SHA-256 does not match")

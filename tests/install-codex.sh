@@ -10,7 +10,7 @@ printf 'old skill\n' > "$CODEX_HOME/skills/dev-workflow/SKILL.md"
 bash "$HERE/bin/install-codex" --codex-home "$CODEX_HOME" --yes >/dev/null
 
 version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$HERE/.codex-plugin/plugin.json")"
-[ "$version" = "0.10.0" ] || { echo "FAIL: expected release version 0.10.0, got $version"; exit 1; }
+[ "$version" = "0.11.0" ] || { echo "FAIL: expected release version 0.11.0, got $version"; exit 1; }
 
 [ -L "$CODEX_HOME/skills/dev-workflow" ] || { echo "FAIL: dev-workflow skill link missing"; exit 1; }
 [ -L "$CODEX_HOME/skills/grill-me" ] || { echo "FAIL: grill-me skill link missing"; exit 1; }

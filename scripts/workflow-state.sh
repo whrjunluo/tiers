@@ -718,7 +718,8 @@ reviewers = data.get("reviewers") or []
 known_families = {
     "codex": "openai", "gemini": "google", "mimo": "xiaomi",
     "cursor": "cursor", "cursor-agent": "cursor", "grok": "xai",
-    "opencode": "configurable", "antigravity": "google", "agy": "google",
+    "opencode": "configurable", "kimi": "configurable",
+    "antigravity": "google", "agy": "google",
 }
 artifact = data.get("artifact_sha256") or ""
 repository = data.get("repository_fingerprint") or ""

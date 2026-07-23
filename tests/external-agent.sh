@@ -42,6 +42,18 @@ make_stub cursor-agent '{"is_error":false,"subtype":"success","result":"cursor o
 make_stub grok         '{"text":"grok ok","stopReason":"EndTurn","sessionId":"K1"}'
 make_stub opencode     '{"sessionID":"O1","type":"text","part":{"id":"p1","text":"opencode ok"}}'
 make_stub agy          'agy ok'
+cat > "$SBOX/bin/kimi" <<SH
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$ARGS_DIR/kimi"
+printf '%s\n' "\${KIMI_CODE_EXPERIMENTAL_FLAG:-}" > "$ARGS_DIR/kimi.env"
+if printf '%s\n' "\$@" | grep -qx -- '--help'; then
+  printf '%s\n' '  --agent-file <path>  Load a custom agent profile'
+  exit 0
+fi
+printf '%s\n' '{"role":"assistant","content":"kimi ok"}'
+printf '%s\n' '{"role":"meta","type":"session.resume_hint","session_id":"KIMI1"}'
+SH
+chmod +x "$SBOX/bin/kimi"
 
 run() { PATH="$SBOX/bin:$PATH" python3 "$RUNNER" --progress none "$@"; }
 field() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$2',''))" <<<"$1"; }
@@ -59,7 +71,8 @@ wait_for_event() { # file event [minimum-count]
 
 # --- each agent: json contract parsed correctly -----------------------------
 for pair in "codex|codex ok|T1" "gemini|gemini ok|G1" "mimo|mimo ok|M1" \
-            "cursor|cursor ok|C1" "grok|grok ok|K1" "opencode|opencode ok|O1"; do
+            "cursor|cursor ok|C1" "grok|grok ok|K1" "opencode|opencode ok|O1" \
+            "kimi|kimi ok|KIMI1"; do
   IFS='|' read -r ag msg sid <<<"$pair"
   out="$(run --agent "$ag" --cd "$SBOX/repo" --format json --PROMPT "hi")"
   [ "$(field "$out" success)" = "True" ] || fail "$ag did not succeed: $out"
@@ -92,6 +105,20 @@ grep -q 'trust' "$ARGS_DIR/cursor-agent" || fail "cursor should pass --trust"
 run --agent cursor --cd "$SBOX/repo" --mode delegate --PROMPT hi >/dev/null
 grep -q 'force' "$ARGS_DIR/cursor-agent" || fail "cursor delegate should force"
 
+run --agent kimi --cd "$SBOX/repo" --PROMPT hi >/dev/null
+grep -q -- '--agent-file' "$ARGS_DIR/kimi" || fail "kimi review should use a read-only agent profile"
+grep -q -- '--output-format' "$ARGS_DIR/kimi" || fail "kimi should request stream-json output"
+grep -q '^1$' "$ARGS_DIR/kimi.env" || fail "kimi review should enable the v2 agent-file capability"
+run --agent kimi --cd "$SBOX/repo" --mode delegate --SESSION_ID KIMI1 --model kimi-code/test --PROMPT hi >/dev/null
+if grep -q -- '--agent-file' "$ARGS_DIR/kimi"; then fail "kimi delegate should not use the read-only profile"; fi
+grep -q -- '--session' "$ARGS_DIR/kimi" || fail "kimi resume flag missing"
+grep -q -- '--model' "$ARGS_DIR/kimi" || fail "kimi model flag missing"
+if run --agent kimi --cd "$SBOX/repo" --mode delegate --require-permissions --PROMPT hi >/dev/null 2>"$SBOX/kimi-permissions.err"; then
+  fail "kimi delegate should reject --require-permissions when prompt mode cannot preserve approvals"
+fi
+grep -q 'cannot preserve interactive approvals' "$SBOX/kimi-permissions.err" \
+  || fail "kimi delegate permission rejection should explain the unsupported contract"
+
 # --- context git prepends repo context --------------------------------------
 git -C "$SBOX/repo" init -q
 git -C "$SBOX/repo" config user.email t@e.com
@@ -116,6 +143,12 @@ python3 -c "import sys,json; d=json.load(sys.stdin); assert all(a.get('health_st
   || fail "--list missing persistent health metadata"
 python3 -c "import sys,json; d=json.load(sys.stdin); assert all(a.get('routing_priority') for a in d)" <<<"$out" \
   || fail "--list missing machine-readable routing priority"
+python3 -c 'import sys,json; row=next(r for r in json.load(sys.stdin) if r["agent"] == "kimi"); assert row["family"] == "configurable"; assert row["auto_eligible"] is False; assert row["review_capable"] is True' <<<"$out" \
+  || fail "--list should expose conservative Kimi routing capabilities"
+
+out="$(run --cross-review kimi,mimo --cd "$SBOX/repo" --format json --PROMPT "kimi explicit review")"
+python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["success"] and d["quorum"]; assert {r["agent"] for r in d["reviewers"]} == {"kimi", "mimo"}' <<<"$out" \
+  || fail "explicit Kimi cross-review should work with the read-only profile: $out"
 
 # --- cross-review quorum ------------------------------------------------------
 out="$(run --cross-review mimo,grok --cd "$SBOX/repo" --context git --format json --PROMPT "same artifact")"
@@ -286,6 +319,7 @@ agents.update({
     "opencode": {"status": "slow", "recommended_timeout_seconds": 300, "last_duration_seconds": 3, "consecutive_failures": 0},
     "cursor": {"status": "slow", "recommended_timeout_seconds": 300, "last_duration_seconds": 10, "consecutive_failures": 0},
     "grok": {"status": "degraded", "recommended_timeout_seconds": 100, "last_duration_seconds": 5, "consecutive_failures": 2},
+    "kimi": {"status": "healthy", "recommended_timeout_seconds": 30, "last_duration_seconds": 2, "consecutive_failures": 0},
 })
 json.dump(data, open(path, "w", encoding="utf-8"))
 PY
@@ -293,8 +327,27 @@ make_stub mimo '{"sessionID":"M-auto","type":"text","part":{"id":"p1","text":"mi
 make_stub agy 'agy auto'
 auto_one="$(run --cross-review auto --orchestrator-family openai --review-profile small-fix --cd "$SBOX/repo" --format json --PROMPT auto)"
 auto_two="$(run --cross-review auto --orchestrator-family openai --review-profile small-fix --cd "$SBOX/repo" --format json --PROMPT auto)"
-python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=json.loads(sys.argv[2]); selected=a["selection"]["selected_reviewers"]; selected_two=b["selection"]["selected_reviewers"]; assert set(selected) == set(selected_two); assert a["selection"]["mode"] == "auto"; assert a["selection"]["orchestrator_family"] == "openai"; assert len(selected) == 2; assert all(r["family"] != "openai" for r in a["reviewers"]); assert len({r["family"] for r in a["reviewers"]}) == 2; assert "grok" not in selected; assert set(selected) == {"mimo", "antigravity"}, selected' "$auto_one" "$auto_two" \
+python3 -c 'import json,sys; a=json.loads(sys.argv[1]); b=json.loads(sys.argv[2]); selected=a["selection"]["selected_reviewers"]; selected_two=b["selection"]["selected_reviewers"]; assert set(selected) == set(selected_two); assert a["selection"]["mode"] == "auto"; assert a["selection"]["orchestrator_family"] == "openai"; assert len(selected) == 2; assert all(r["family"] != "openai" for r in a["reviewers"]); assert len({r["family"] for r in a["reviewers"]}) == 2; assert "grok" not in selected; assert "kimi" not in selected; assert set(selected) == {"mimo", "antigravity"}, selected' "$auto_one" "$auto_two" \
   || fail "auto reviewer selection should be stable and health-aware"
+
+OLD_KIMI="$SBOX/old-kimi"
+mkdir -p "$OLD_KIMI/bin" "$OLD_KIMI/data"
+cat > "$OLD_KIMI/bin/kimi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = --help ]; then echo 'Usage: kimi --prompt'; exit 0; fi
+printf '%s\n' '{"role":"assistant","content":"legacy kimi"}'
+printf '%s\n' '{"role":"meta","session_id":"OLD-KIMI"}'
+SH
+chmod +x "$OLD_KIMI/bin/kimi"
+if PATH="$OLD_KIMI/bin:/usr/bin:/bin" DEV_WORKFLOW_DATA="$OLD_KIMI/data" \
+  /usr/bin/python3 "$RUNNER" --progress none --agent kimi --cd "$SBOX/repo" --format json --PROMPT review \
+  >"$OLD_KIMI/review.json" 2>"$OLD_KIMI/review.err"; then
+  fail "legacy Kimi without --agent-file must fail closed for review"
+fi
+grep -q 'safe headless review capability' "$OLD_KIMI/review.json" || fail "legacy Kimi review failure should explain the capability requirement"
+PATH="$OLD_KIMI/bin:/usr/bin:/bin" DEV_WORKFLOW_DATA="$OLD_KIMI/data" \
+  /usr/bin/python3 "$RUNNER" --progress none --agent kimi --mode delegate --cd "$SBOX/repo" --format json --PROMPT delegate >/dev/null \
+  || fail "legacy Kimi should remain usable for explicitly authorized delegate mode"
 
 ONE_FAMILY="$SBOX/one-family"
 mkdir -p "$ONE_FAMILY/bin" "$ONE_FAMILY/data"
@@ -461,9 +514,11 @@ grep -q 'terminated' "$SKILL" || fail "terminated evidence contract missing from
 grep -q 'tiers.platform-review/v1' "$SKILL" || fail "platform fallback evidence ownership missing from skill"
 grep -q '外部失败证据\|external failure evidence' "$SKILL" || fail "external runner must preserve failure evidence for host fallback"
 grep -q '不得.*启动平台子代理\|never.*launch.*platform' "$SKILL" || fail "external runner must not silently launch platform agents"
-for a in codex gemini mimo cursor grok opencode antigravity; do
+for a in codex gemini mimo cursor grok opencode antigravity kimi; do
   grep -q "$a" "$SKILL" || fail "$a missing from skill"
 done
+grep -q 'auto_eligible=false' "$SKILL" || fail "Kimi conservative auto-routing policy missing from skill"
+grep -q 'Read.*Grep.*Glob\|Read/Grep/Glob' "$SKILL" || fail "Kimi read-only review profile missing from skill"
 grep -q 'external-agent' "$HERE/skills/dev-workflow/SKILL.md" || fail "dev-workflow routing missing"
 
 echo "PASS tests/external-agent.sh"

@@ -264,6 +264,7 @@ class ManagedInstaller:
             "skills/external-agent/SKILL.md",
             "skills/grill-me/SKILL.md",
             "skills/grilling/SKILL.md",
+            "assets/kimi-readonly-reviewer.md",
         )
         for relative in required_files:
             if not (candidate / relative).is_file():

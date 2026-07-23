@@ -415,6 +415,7 @@ python3 <plugin-root>/scripts/external_agent.py --agent <name> --cd "$PWD" \
 | `grok` | xAI | 搜集 / 交叉审查（联网） |
 | `antigravity`(`agy`) | Google | 搜集 / 审查（gemini 个人版已停用的继任者） |
 | `mimo` | 小米 | 国内兜底 |
+| `kimi` | 可配置 provider | 显式执行 / capability-gated 只读审查（不进入 auto） |
 
 - **搜集** → `--mode review`（只读）：联网→`grok`，啃大库→`antigravity`。
 - **执行** → `--mode delegate`（可写，需用户授权）：仓库内→`cursor`/`codex`，纯算法→`codex`，国内→`mimo`。

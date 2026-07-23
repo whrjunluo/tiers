@@ -59,7 +59,10 @@ python3 <plugin-root>/scripts/external_agent.py \
 | `antigravity` (`agy`) | Google | independent agentic review (Gemini successor) | **gather / review** |
 | `mimo` | Xiaomi | China-available, Chinese reasoning | execute / review (fallback) |
 | `opencode` | configurable provider | repo-aware execute/review on your own (often free/self-hosted) models | execute / review |
+| `kimi` | configurable provider | Kimi Code repo analysis with session resume and structured output | execute / explicit review |
 | `gemini` | Google | long context — **legacy: individual tiers disabled, migrate to `antigravity`** | (enterprise only) |
+
+Kimi review is capability-gated: the installed CLI must expose v2 `--agent-file`, and the runner supplies a profile limited to `Read/Grep/Glob`. Kimi is `auto_eligible=false` and never enters automatic cross-review selection because Kimi Code can use configurable providers; explicit review remains available after the operator verifies provider provenance. Delegate mode does not use the read-only profile and still requires explicit write authorization.
 
 > The `gemini` CLI returns `IneligibleTierError` for free / Pro / Ultra accounts since
 > the June 2026 migration. Use `antigravity` (`agy`) for Google-family work. The

@@ -8,7 +8,7 @@ LICENSE (MIT), with the following provenance note:
 - codex / gemini stream parsing logic is adapted from the collaborating-with-codex
   and collaborating-with-gemini skills in GuDaStudio/skills (MIT, Copyright (c)
   2025 GudaStudio).
-- mimo / cursor / grok / opencode / antigravity adapters are original work for
+- mimo / cursor / grok / opencode / antigravity / kimi adapters are original work for
   this repository.
 
 All distributed under the repository's MIT terms.

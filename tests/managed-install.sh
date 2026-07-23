@@ -54,8 +54,8 @@ manifests = (
 print(",".join(json.loads((root / path).read_text(encoding="utf-8"))["version"] for path in manifests))
 PY
 )"
-[ "$release_versions" = "0.10.0,0.10.0,0.10.0" ] || \
-  fail "release manifests must all be 0.10.0, found $release_versions"
+[ "$release_versions" = "0.11.0,0.11.0,0.11.0" ] || \
+  fail "release manifests must all be 0.11.0, found $release_versions"
 
 python3 - "$ROOT" "$SOURCE" <<'PY'
 import json
@@ -109,6 +109,10 @@ for skill in ("dev-workflow", "external-agent", "grill-me", "grilling"):
     path = source / "skills" / skill / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"# {skill}\n", encoding="utf-8")
+
+asset = source / "assets" / "kimi-readonly-reviewer.md"
+asset.parent.mkdir(parents=True, exist_ok=True)
+asset.write_text("# readonly Kimi reviewer\n", encoding="utf-8")
 PY
 
 git -C "$SOURCE" init -q -b main

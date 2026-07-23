@@ -816,6 +816,32 @@ standard_degraded_path="$(degraded_review_evidence "$STANDARD_DEGRADED" degraded
 bash "$WS" --repo "$STANDARD_DEGRADED" complete >/dev/null
 [ "$(getf "$STANDARD_DEGRADED" phase)" = done ] || fail "small-fix 应接受有效 one-success degraded review"
 
+# Kimi is a configurable-family external reviewer and can participate only in
+# an explicit, valid quorum; the completion allowlist must recognize it.
+KIMI_QUORUM="$(understanding_repo kimi-quorum L2)"
+setf "$KIMI_QUORUM" context.environment n/a
+setf "$KIMI_QUORUM" context.delivery local-only
+setf "$KIMI_QUORUM" requirements.external_review true
+kimi_understanding="$(evidence "$KIMI_QUORUM" understanding.txt $'result: PASS\nkind: impact\naffected: explicit Kimi external review evidence\ntests: completion family allowlist')"
+bash "$WS" --repo "$KIMI_QUORUM" understand "$kimi_understanding" >/dev/null
+setf "$KIMI_QUORUM" phase review
+setf "$KIMI_QUORUM" evidence.tests "$(evidence "$KIMI_QUORUM" tests.txt $'command: Kimi contract tests\nexit_code: 0')"
+setf "$KIMI_QUORUM" evidence.residual_risks "$(evidence "$KIMI_QUORUM" risks.txt 'risk: Kimi provider provenance is operator-verified')"
+kimi_fingerprint="$(python3 "$RUNNER" --fingerprint --cd "$KIMI_QUORUM")"
+kimi_review_path="$(review_evidence "$KIMI_QUORUM" kimi-review.json "$kimi_fingerprint" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')")"
+python3 - "$KIMI_QUORUM/$kimi_review_path" <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["reviewers"][1]["agent"] = "kimi"
+data["reviewers"][1]["family"] = "configurable"
+data["successful_families"] = ["google", "configurable"]
+json.dump(data, open(path, "w"))
+PY
+setf "$KIMI_QUORUM" evidence.external_review "$kimi_review_path"
+bash "$WS" --repo "$KIMI_QUORUM" complete >/dev/null
+[ "$(getf "$KIMI_QUORUM" phase)" = done ] || fail "有效 Kimi configurable-family quorum 应通过完成门"
+
 # A failed external attempt can be replaced by an honest two-model platform fallback.
 PLATFORM_STANDARD="$(understanding_repo platform-standard L2)"
 setf "$PLATFORM_STANDARD" context.environment n/a

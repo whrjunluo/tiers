@@ -13,7 +13,7 @@ collaborating-with-* bridges and the shell external-agent.sh runner.
       [--format text|json] [--context none|git] \
       [--review-profile standard|small-fix] [--timeout N]
 
-Agents: codex, gemini, mimo, cursor, grok, antigravity (alias: agy).
+Agents: codex, gemini, mimo, cursor, grok, opencode, antigravity, kimi (alias: agy).
 
 --mode review   : read-only posture (independent review / research). Default.
 --mode delegate : read-write posture (let the agent implement). Needs user OK.
@@ -188,6 +188,45 @@ def _opencode(prompt, cd, mode, sid, model, skip_perm):
     return cmd, "mimo", None
 
 
+def _kimi(prompt, cd, mode, sid, model, skip_perm):
+    cmd = ["kimi", "--prompt", prompt, "--output-format", "stream-json"]
+    if mode == "review":
+        profile = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "assets", "kimi-readonly-reviewer.md",
+        )
+        cmd = ["env", "KIMI_CODE_EXPERIMENTAL_FLAG=1"] + cmd
+        cmd += ["--agent-file", profile]
+    if model:
+        cmd += ["--model", model]
+    if sid:
+        cmd += ["--session", sid]
+    return cmd, "gemini", None
+
+
+def _kimi_review_capable() -> bool:
+    path = shutil.which("kimi")
+    if not path:
+        return False
+    env = os.environ.copy()
+    env["KIMI_CODE_EXPERIMENTAL_FLAG"] = "1"
+    try:
+        completed = subprocess.run(
+            [path, "--help"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=5, env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0 and "--agent-file" in (
+        (completed.stdout or "") + (completed.stderr or "")
+    )
+
+
+def _review_capable(name: str) -> bool:
+    check = AGENTS[name].get("review_capability")
+    return bool(check()) if check else True
+
+
 AGENTS = {
     "codex":       {"bin": "codex",        "build": _codex,    "resume": True,  "family": "openai"},
     "gemini":      {"bin": "gemini",       "build": _gemini,   "resume": True,  "family": "google"},
@@ -196,6 +235,7 @@ AGENTS = {
     "grok":        {"bin": "grok",         "build": _grok,     "resume": True,  "family": "xai"},
     "opencode":    {"bin": "opencode",     "build": _opencode, "resume": True,  "family": "configurable"},
     "antigravity": {"bin": "agy",          "build": _agy,      "resume": False, "family": "google"},
+    "kimi":        {"bin": "kimi",         "build": _kimi,     "resume": True,  "family": "configurable", "auto_eligible": False, "review_capability": _kimi_review_capable},
 }
 ALIASES = {"agy": "antigravity", "cursor-agent": "cursor"}
 
@@ -419,6 +459,8 @@ def _auto_review_candidates(review_profile: str,
                             orchestrator_family: str = "") -> List[dict]:
     candidates = []
     for name, spec in AGENTS.items():
+        if not spec.get("auto_eligible", True):
+            continue
         if spec["family"] == "configurable":
             # Auto routing cannot prove which provider an OpenCode installation
             # uses, so it must not count that nominal label as an independent
@@ -1022,7 +1064,7 @@ def cross_review(args, prompt):
 
 def main():
     ap = argparse.ArgumentParser(description="Unified external-agent runner")
-    ap.add_argument("--agent", help="codex|gemini|mimo|cursor|grok|antigravity")
+    ap.add_argument("--agent", help="codex|gemini|mimo|cursor|grok|opencode|antigravity|kimi")
     ap.add_argument("--cross-review", default="", help="Comma-separated read-only reviewers.")
     ap.add_argument(
         "--orchestrator-family",
@@ -1065,7 +1107,9 @@ def main():
             path = shutil.which(spec["bin"])
             row = {"agent": name, "bin": spec["bin"],
                    "installed": bool(path), "path": path,
-                   "resume": spec["resume"], "family": spec["family"]}
+                   "resume": spec["resume"], "family": spec["family"],
+                   "auto_eligible": spec.get("auto_eligible", True),
+                   "review_capable": _review_capable(name) if path else False}
             row.update(_health_metadata(name))
             rows.append(row)
         print(json.dumps(rows, indent=2, ensure_ascii=False))
@@ -1104,6 +1148,10 @@ def main():
         emit(args, False, None, "", f"{spec['bin']} not found on PATH. Install it and log in.")
     if args.SESSION_ID and not spec["resume"]:
         emit(args, False, None, "", f"agent {name} does not support multi-turn resume")
+    if args.mode == "review" and not _review_capable(name):
+        emit(args, False, None, "", f"agent {name} lacks the safe headless review capability (--agent-file)")
+    if name == "kimi" and args.mode == "delegate" and not args.skip_perm:
+        emit(args, False, None, "", "Kimi prompt mode cannot preserve interactive approvals; omit --require-permissions only after explicit write authorization")
 
     argv, kind, sentinel = spec["build"](prompt, args.cd, args.mode, args.SESSION_ID,
                                          args.model, args.skip_perm)

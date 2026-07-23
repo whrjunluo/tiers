@@ -89,7 +89,7 @@ fi
 external_ready=0
 external_families=""
 external_family_count=0
-for entry in codex:openai cursor-agent:cursor grok:xai agy:google opencode:configurable mimo:xiaomi; do
+for entry in codex:openai cursor-agent:cursor grok:xai agy:google opencode:configurable kimi:configurable mimo:xiaomi; do
   cli="${entry%%:*}"
   family="${entry#*:}"
   if have "$cli"; then
@@ -134,7 +134,7 @@ status "superpowers" "$superpowers" "optional enhanced L1/TDD/review skill chain
 status "grill-with-docs" "$grill_docs" "optional upgrade; built-in grilling is available"
 status "Figma fidelity" "$figma_fidelity" "optional UI design verification workflow"
 status "code-review-graph" "$codegraph" "optional risk calibration and MCP registration"
-status "external-agent CLIs" "$external_ready available" "$external_family_count distinct families; codex/cursor-agent/grok/agy/opencode/mimo"
+status "external-agent CLIs" "$external_ready available" "$external_family_count distinct families; codex/cursor-agent/grok/agy/opencode/kimi/mimo"
 status "Adversarial review" "$adversarial_review" "installed CLIs are candidates; actual quorum requires successful calls from 2+ distinct families"
 if have python3; then
   health_summary="$(python3 - "$DEV_WORKFLOW_DATA_DIR/external-agent-health.json" <<'PY'
