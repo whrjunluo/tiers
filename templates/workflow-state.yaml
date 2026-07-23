@@ -11,6 +11,9 @@ context:
 execution:
   mode: single
   profile: standard # standard | small-fix
+  plan_sha256: ""
+  max_workers: 2
+  fallback_reason: ""
   objective_sha256: ""
   continuation: 0
   base_revision: ""
@@ -37,6 +40,7 @@ requirements:
 artifacts:
   spec: ""
   plan: ""
+  execution_manifest: ""
 evidence:
   tests: ""
   business: ""

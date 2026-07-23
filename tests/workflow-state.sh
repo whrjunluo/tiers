@@ -11,6 +11,7 @@ new_repo(){
   mkdir -p "$repo"
   git -C "$repo" init -q
   git -C "$repo" checkout -q -b feat/test-state
+  git -C "$repo" commit --allow-empty -qm initial
   bash "$WS" --repo "$repo" init >/dev/null
   printf '%s\n' "$repo"
 }
@@ -232,6 +233,41 @@ sha256_file(){
     shasum -a 256 "$1" | awk '{print $1}'
   fi
 }
+write_execution_manifest(){
+  local repo="$1" name="$2" second_write_set="$3" plan="docs/superpowers/parallel-plan.md" manifest
+  manifest="docs/superpowers/.workflow-evidence/$name"
+  mkdir -p "$repo/docs/superpowers/.workflow-evidence"
+  printf '%s\n' '# parallel plan' > "$repo/$plan"
+  setf "$repo" artifacts.plan "$plan"
+  python3 - "$repo" "$repo/$plan" "$repo/$manifest" "$second_write_set" <<'PY'
+import hashlib
+import json
+import pathlib
+import subprocess
+import sys
+
+repo, plan, manifest, second_write_set = map(pathlib.Path, sys.argv[1:])
+base = hashlib.sha256(
+    subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip().encode()
+).hexdigest()
+data = {
+    "runner": "tiers.execution-manifest/v1",
+    "mode": "multi-agent",
+    "repository": hashlib.sha256(str(repo.resolve()).encode()).hexdigest(),
+    "base": base,
+    "plan_sha": hashlib.sha256(plan.read_bytes()).hexdigest(),
+    "max_workers": 2,
+    "tasks": [
+        {"id": "controller", "status": "ready", "dependencies": [],
+         "write_set": ["scripts/workflow-state.sh"], "worktree": ".worktrees/controller"},
+        {"id": "tests", "status": "ready", "dependencies": [],
+         "write_set": [str(second_write_set)], "worktree": ".worktrees/tests"},
+    ],
+}
+manifest.write_text(json.dumps(data), encoding="utf-8")
+PY
+  printf '%s\n' "$manifest"
+}
 unfinished_repo(){
   local repo
   repo="$(new_repo "$1")"
@@ -289,6 +325,10 @@ bash "$WS" --repo "$LEGACY" init >/dev/null
 [ "$(getf "$LEGACY" requirements.business)" = false ] || fail "migration 应补 requirements"
 [ -n "$(getf "$LEGACY" context.repo)" ] || fail "migration 应补 context"
 [ "$(getf "$LEGACY" execution.mode)" = single ] || fail "未完成旧任务应迁移为 single mode"
+[ "$(getf "$LEGACY" execution.plan_sha256)" = "" ] || fail "migration 应补空 plan hash"
+[ "$(getf "$LEGACY" execution.max_workers)" = 2 ] || fail "migration 应补默认 worker limit"
+[ "$(getf "$LEGACY" execution.fallback_reason)" = "" ] || fail "migration 应补空 fallback reason"
+[ "$(getf "$LEGACY" artifacts.execution_manifest)" = "" ] || fail "migration 应补空 execution manifest"
 [ "$(getf "$LEGACY" understanding.status)" = pending ] || fail "未完成旧任务应迁移为 pending understanding"
 [ "$(getf "$LEGACY" completion.workflow_version)" = 2 ] || fail "未完成旧任务应升级为 workflow v2"
 
@@ -325,9 +365,60 @@ f="$REPO/docs/superpowers/.workflow-state.yaml"
 [ "$(getf "$REPO" context.branch)" = "feat/test-state" ] || fail "init 应记录 branch"
 [ "$(getf "$REPO" execution.mode)" = single ] || fail "新状态应默认 single mode"
 [ "$(getf "$REPO" execution.profile)" = standard ] || fail "新状态应默认 standard profile"
+[ "$(getf "$REPO" execution.plan_sha256)" = "" ] || fail "新状态不应带 plan hash"
+[ "$(getf "$REPO" execution.max_workers)" = 2 ] || fail "新状态应默认两个 workers"
+[ "$(getf "$REPO" execution.fallback_reason)" = "" ] || fail "新状态不应带 fallback reason"
+[ "$(getf "$REPO" artifacts.execution_manifest)" = "" ] || fail "新状态不应带 execution manifest"
 [ "$(getf "$REPO" understanding.status)" = pending ] || fail "新状态应默认 pending understanding"
 [ "$(getf "$REPO" confirmation.status)" = pending ] || fail "新状态应默认 pending confirmation"
 [ "$(getf "$REPO" completion.workflow_version)" = 2 ] || fail "新状态应使用 workflow v2"
+
+# Execution choices remain single by default, and multi-agent manifests are bound to the plan.
+MULTI_AGENT="$(new_repo multi-agent-choice)"
+multi_manifest="$(write_execution_manifest "$MULTI_AGENT" valid-manifest.json tests/workflow-state.sh)"
+setf "$MULTI_AGENT" phase plan
+bash "$WS" --repo "$MULTI_AGENT" choose-execution multi-agent "$multi_manifest" >/dev/null
+[ "$(getf "$MULTI_AGENT" execution.mode)" = multi-agent ] || fail "有效 manifest 应选择 multi-agent"
+[ "$(getf "$MULTI_AGENT" artifacts.execution_manifest)" = "$multi_manifest" ] || fail "multi-agent 应记录 manifest"
+[ "$(getf "$MULTI_AGENT" execution.plan_sha256)" = "$(sha256_file "$MULTI_AGENT/docs/superpowers/parallel-plan.md")" ] || fail "multi-agent 应记录 plan hash"
+[ "$(getf "$MULTI_AGENT" execution.max_workers)" = 2 ] || fail "multi-agent 应记录 manifest worker limit"
+bash "$WS" --repo "$MULTI_AGENT" check >/dev/null || fail "有效 multi-agent manifest 应通过 check"
+printf '%s\n' '# stale after selection' >> "$MULTI_AGENT/docs/superpowers/parallel-plan.md"
+expect_fail "check 应重新校验 multi-agent plan hash" bash "$WS" --repo "$MULTI_AGENT" check
+
+OVERLAPPING_MANIFEST="$(new_repo overlapping-manifest)"
+overlap_manifest="$(write_execution_manifest "$OVERLAPPING_MANIFEST" overlap-manifest.json scripts/workflow-state.sh)"
+setf "$OVERLAPPING_MANIFEST" phase plan
+expect_fail "overlapping write sets 不得选择 multi-agent" \
+  bash "$WS" --repo "$OVERLAPPING_MANIFEST" choose-execution multi-agent "$overlap_manifest"
+[ "$(getf "$OVERLAPPING_MANIFEST" execution.mode)" = single ] || fail "无效 overlap manifest 不得改变 mode"
+
+UNKNOWN_WRITE_SET="$(new_repo unknown-write-set)"
+unknown_manifest="$(write_execution_manifest "$UNKNOWN_WRITE_SET" unknown-write-set.json ../outside)"
+setf "$UNKNOWN_WRITE_SET" phase plan
+expect_fail "未知 write set 不得选择 multi-agent" \
+  bash "$WS" --repo "$UNKNOWN_WRITE_SET" choose-execution multi-agent "$unknown_manifest"
+[ "$(getf "$UNKNOWN_WRITE_SET" execution.mode)" = single ] || fail "无效 write set 不得改变 mode"
+
+STALE_PLAN="$(new_repo stale-plan)"
+stale_manifest="$(write_execution_manifest "$STALE_PLAN" stale-plan.json tests/workflow-state.sh)"
+printf '%s\n' '# changed after manifest' >> "$STALE_PLAN/docs/superpowers/parallel-plan.md"
+setf "$STALE_PLAN" phase plan
+expect_fail "stale plan hash 不得选择 multi-agent" \
+  bash "$WS" --repo "$STALE_PLAN" choose-execution multi-agent "$stale_manifest"
+[ "$(getf "$STALE_PLAN" execution.mode)" = single ] || fail "stale plan manifest 不得改变 mode"
+
+bash "$WS" --repo "$MULTI_AGENT" choose-execution single >/dev/null
+[ "$(getf "$MULTI_AGENT" execution.mode)" = single ] || fail "single choice 应恢复 single mode"
+[ "$(getf "$MULTI_AGENT" artifacts.execution_manifest)" = "" ] || fail "single choice 应清空 manifest"
+[ "$(getf "$MULTI_AGENT" execution.plan_sha256)" = "" ] || fail "single choice 应清空 plan hash"
+[ "$(getf "$MULTI_AGENT" execution.max_workers)" = 2 ] || fail "single choice 应重置 worker limit"
+
+GOAL_CHOICE="$(new_repo goal-choice)"
+setf "$GOAL_CHOICE" phase plan
+bash "$WS" --repo "$GOAL_CHOICE" goal "Keep Goal separate from execution choice" >/dev/null
+expect_fail "Goal mode 不得选择 execution mode" \
+  bash "$WS" --repo "$GOAL_CHOICE" choose-execution single
 
 SYMLINK_EVIDENCE="$(new_repo symlink-evidence)"
 setf "$SYMLINK_EVIDENCE" task symlink-evidence

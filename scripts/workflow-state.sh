@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
-# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
+# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent> [manifest]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
 set -euo pipefail
 # 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -23,7 +23,7 @@ VALID_PROFILES="standard small-fix"
 VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
 VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
 VALID_CONFIRMATION_STATUSES="pending passed blocked"
-VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.checkpoint requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
+VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.checkpoint execution.plan_sha256 execution.max_workers execution.fallback_reason requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan artifacts.execution_manifest evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
 SNAPSHOT_TMP_YAML=""
 SNAPSHOT_TMP_META=""
 ACTIVE_TMP=""
@@ -102,7 +102,7 @@ yget(){ yget_file "$STATE" "$1"; }
 encode_yaml_scalar(){
   local field="$1" value="$2"
   case "$field" in
-    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.continuation|understanding.status|confirmation.mode|confirmation.status)
+    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.continuation|execution.max_workers|understanding.status|confirmation.mode|confirmation.status)
       printf '%s\n' "$value"
       ;;
     *)
@@ -169,9 +169,13 @@ ensure_schema(){
   append_template_section understanding
   append_template_section confirmation
   append_template_section requirements
+  append_template_section artifacts
   append_template_section evidence
   append_template_section completion
   ensure_nested_field execution profile standard
+  ensure_nested_field execution plan_sha256 '""'
+  ensure_nested_field execution max_workers 2
+  ensure_nested_field execution fallback_reason '""'
   ensure_nested_field understanding objective_sha256 '""'
   ensure_nested_field understanding reused_kind '""'
   ensure_nested_field understanding reused_evidence '""'
@@ -186,6 +190,7 @@ ensure_schema(){
     ensure_nested_field completion workflow_version 1
   fi
   ensure_nested_field completion requirements_sha256 '""'
+  ensure_nested_field artifacts execution_manifest '""'
   if [ "$(yget understanding.status)" = passed ] && is_empty_value "$(yget understanding.objective_sha256)" \
     && [ "$(yget understanding.scope_sha256)" = "$(scope_sha256)" ]; then
     write_field understanding.objective_sha256 "$(objective_sha256)"
@@ -246,6 +251,23 @@ print(candidate)
 PY
 }
 
+artifact_path(){
+  local value="$1"
+  python3 - "$REPO" "$value" <<'PY'
+from pathlib import Path
+import sys
+
+repo = Path(sys.argv[1]).resolve()
+value = Path(sys.argv[2])
+if value.is_absolute():
+    raise SystemExit(1)
+candidate = (repo / value).resolve()
+if candidate == repo or repo not in candidate.parents:
+    raise SystemExit(1)
+print(candidate)
+PY
+}
+
 valid_evidence_reference(){
   local value="$1"
   case "$value" in
@@ -301,6 +323,75 @@ canonical_repo_root(){
 }
 
 repository_sha256(){ text_sha256 "$(canonical_repo_root)"; }
+base_revision_sha256(){ text_sha256 "$(yget execution.base_revision)"; }
+
+reset_execution_choice(){
+  write_field execution.mode single
+  write_field artifacts.execution_manifest ""
+  write_field execution.plan_sha256 ""
+  write_field execution.max_workers 2
+  write_field execution.fallback_reason ""
+}
+
+manifest_workers=""
+validate_execution_manifest_file(){
+  local manifest_value="$1" plan_value="$2" manifest_path plan_path plan_sha base output
+  manifest_workers=""
+  if ! valid_evidence_reference "$manifest_value"; then
+    add_error "artifacts.execution_manifest 必须位于 docs/superpowers/.workflow-evidence/ 且不得包含 ..: ${manifest_value:-空}"
+    return
+  fi
+  if ! manifest_path="$(evidence_path "$manifest_value")" || [ ! -f "$manifest_path" ] || [ -L "$manifest_path" ]; then
+    add_error "artifacts.execution_manifest 必须是 .workflow-evidence 下的 regular file: $manifest_value"
+    return
+  fi
+  if is_empty_value "$plan_value" || ! plan_path="$(artifact_path "$plan_value")" || [ ! -f "$plan_path" ] || [ -L "$plan_path" ]; then
+    add_error "artifacts.plan 必须是 repository 内现存的 regular file: ${plan_value:-空}"
+    return
+  fi
+  plan_sha="$(file_sha256 "$plan_path")"
+  base="$(base_revision_sha256)"
+  if ! output="$(python3 "$PLUGIN_ROOT/scripts/execution_manifest.py" \
+    --validate "$manifest_path" \
+    --repo "$(repository_sha256)" \
+    --base "$base" \
+    --plan-sha "$plan_sha" \
+    --mode multi-agent 2>&1)"; then
+    add_error "execution manifest 校验失败: ${output//$'\n'/; }"
+    return
+  fi
+  if ! manifest_workers="$(python3 - "$output" <<'PY'
+import json
+import sys
+
+try:
+    result = json.loads(sys.argv[1])
+    workers = result["max_workers"]
+    if result != {"valid": True, "max_workers": workers} or isinstance(workers, bool) or not isinstance(workers, int) or workers <= 0:
+        raise ValueError
+except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+    raise SystemExit(1)
+print(workers)
+PY
+  )"; then
+    add_error "execution manifest validator 未返回有效 worker limit"
+    return
+  fi
+}
+
+validate_execution_manifest_gate(){
+  local manifest_value plan_value plan_sha workers
+  [ "$(yget execution.mode)" = multi-agent ] || return
+  manifest_value="$(yget artifacts.execution_manifest)"
+  plan_value="$(yget artifacts.plan)"
+  validate_execution_manifest_file "$manifest_value" "$plan_value"
+  [ -n "$manifest_workers" ] || return
+  plan_sha="$(file_sha256 "$(artifact_path "$plan_value")")"
+  workers="$(yget execution.max_workers)"
+  [ "$(yget execution.plan_sha256)" = "$plan_sha" ] || add_error "execution.plan_sha256 与当前 artifacts.plan 不匹配"
+  printf '%s\n' "$workers" | grep -qE '^[1-9][0-9]*$' || add_error "execution.max_workers 必须是正整数"
+  [ "$workers" = "$manifest_workers" ] || add_error "execution.max_workers 与 manifest 不匹配"
+}
 
 validate_snapshot_key(){
   local key="${1:-}"
@@ -360,9 +451,13 @@ state_structure_valid(){
   value="$(yget_file "$file" phase)"; is_empty_value "$value" || in_list "$value" "$VALID_PHASES" || return 1
   value="$(yget_file "$file" level)"; is_empty_value "$value" || in_list "$value" "$VALID_LEVELS" || return 1
   value="$(yget_file "$file" context.environment)"; is_empty_value "$value" || in_list "$value" "$VALID_ENVIRONMENTS" || return 1
-  value="$(yget_file "$file" execution.mode)"; is_empty_value "$value" || in_list "$value" "single goal" || return 1
+  value="$(yget_file "$file" execution.mode)"; is_empty_value "$value" || in_list "$value" "single multi-agent goal" || return 1
   value="$(yget_file "$file" execution.profile)"; is_empty_value "$value" || in_list "$value" "$VALID_PROFILES" || return 1
   value="$(yget_file "$file" execution.continuation)"; printf '%s\n' "$value" | grep -qE '^[0-9]+$' || return 1
+  if [ "$(yget_file "$file" execution.mode)" = multi-agent ]; then
+    value="$(yget_file "$file" execution.plan_sha256)"; printf '%s\n' "$value" | grep -qE '^[0-9a-f]{64}$' || return 1
+    value="$(yget_file "$file" execution.max_workers)"; printf '%s\n' "$value" | grep -qE '^[1-9][0-9]*$' || return 1
+  fi
   for field in requirements.business requirements.fidelity requirements.external_review; do
     value="$(yget_file "$file" "$field")"
     is_empty_value "$value" || in_list "$value" "$VALID_BOOLEANS" || return 1
@@ -379,15 +474,18 @@ state_is_empty_slot(){
   [ "$(yget_file "$file" context.repo)" = "$(canonical_repo_root)" ] || return 1
   [ "$(yget_file "$file" execution.mode)" = single ] || return 1
   [ "$(yget_file "$file" execution.profile)" = standard ] || return 1
+  [ "$(yget_file "$file" execution.max_workers)" = 2 ] || return 1
   [ "$(yget_file "$file" execution.continuation)" = 0 ] || return 1
   [ "$(yget_file "$file" understanding.status)" = pending ] || return 1
   [ "$(yget_file "$file" confirmation.status)" = pending ] || return 1
   [ "$(yget_file "$file" completion.workflow_version)" = 2 ] || return 1
   for field in task level phase context.target context.sources context.environment context.delivery \
-    execution.objective_sha256 execution.checkpoint understanding.kind understanding.evidence \
+    execution.plan_sha256 execution.fallback_reason execution.objective_sha256 execution.checkpoint \
+    understanding.kind understanding.evidence \
     understanding.evidence_sha256 understanding.scope_sha256 understanding.objective_sha256 \
     understanding.reused_kind understanding.reused_evidence understanding.reused_evidence_sha256 \
     confirmation.mode confirmation.evidence confirmation.decision_sha256 artifacts.spec artifacts.plan \
+    artifacts.execution_manifest \
     evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review \
     evidence.fidelity evidence.residual_risks completion.completed_at completion.repository_fingerprint \
     completion.requirements_sha256 next; do
@@ -417,6 +515,7 @@ state_is_unfinished(){
       errors=""
       validate_understanding_gate
       validate_confirmation_gate
+      validate_execution_manifest_gate
       [ -z "$errors" ]
     ) || return 1
   fi
@@ -899,6 +998,7 @@ validate_completion(){
   errors=""
   validate_understanding_gate
   validate_confirmation_gate
+  validate_execution_manifest_gate
   for field in task level context.repo context.branch context.target context.sources context.environment context.delivery; do
     require_value "$field"
   done
@@ -1079,6 +1179,37 @@ case "${1:-}" in
       reuse="$(yget understanding.status)"
     fi
     echo "✓ 目标续行 = 第 $(yget execution.continuation) 次｜phase = $(yget phase)｜理解度 = $reuse" ;;
+  choose-execution)
+    [ -f "$STATE" ] || die "状态文件不存在，先 init"
+    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] choose-execution <single|multi-agent> [manifest]"
+    sealed_at="$(yget completion.completed_at)"
+    is_empty_value "$sealed_at" || die "任务已封存；不得选择 execution mode"
+    [ "$(yget execution.mode)" != goal ] || die "Goal mode 不支持 choose-execution"
+    choice="$2"
+    phase="$(yget phase)"
+    case "$choice" in
+      single)
+        [ "$#" -eq 2 ] || die "single 不接受 manifest 参数"
+        in_list "$phase" "plan tdd" || die "single 只能在 phase=plan 或 tdd 时选择，当前为 ${phase:-空}"
+        reset_execution_choice
+        echo "✓ execution mode = single" ;;
+      multi-agent)
+        [ "$#" -eq 3 ] || die "用法: workflow-state.sh [--repo R] choose-execution multi-agent <manifest>"
+        [ "$phase" = plan ] || die "multi-agent 只能在 phase=plan 时选择，当前为 ${phase:-空}"
+        errors=""
+        manifest_value="$3"
+        validate_execution_manifest_file "$manifest_value" "$(yget artifacts.plan)"
+        [ -z "$errors" ] || die "multi-agent execution choice 未通过: $errors"
+        plan_path="$(artifact_path "$(yget artifacts.plan)")"
+        write_field execution.mode multi-agent
+        write_field artifacts.execution_manifest "$manifest_value"
+        write_field execution.plan_sha256 "$(file_sha256 "$plan_path")"
+        write_field execution.max_workers "$manifest_workers"
+        write_field execution.fallback_reason ""
+        echo "✓ execution mode = multi-agent（workers=${manifest_workers}）" ;;
+      *) die "非法 execution mode ${choice}（允许: single multi-agent）" ;;
+    esac
+    ;;
   understand)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
     [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] understand <evidence>"
@@ -1183,6 +1314,7 @@ case "${1:-}" in
         errors=""
         validate_understanding_gate
         validate_confirmation_gate
+        validate_execution_manifest_gate
         [ -z "$errors" ] || die "执行硬门未通过: $errors"
       fi
     fi
@@ -1191,6 +1323,16 @@ case "${1:-}" in
       requirements.*) in_list "$value" "$VALID_BOOLEANS" || die "$field 只能是 true/false" ;;
       context.environment) in_list "$value" "$VALID_ENVIRONMENTS" || die "$field 只能是 real/mock/n/a" ;;
       execution.profile) in_list "$value" "$VALID_PROFILES" || die "$field 只能是 standard/small-fix" ;;
+      execution.plan_sha256)
+        if [ "$(yget execution.mode)" = multi-agent ]; then
+          printf '%s\n' "$value" | grep -qE '^[0-9a-f]{64}$' || die "execution.plan_sha256 在 multi-agent mode 必须是 64 位小写 hex"
+        fi
+        ;;
+      execution.max_workers)
+        if [ "$(yget execution.mode)" = multi-agent ]; then
+          printf '%s\n' "$value" | grep -qE '^[1-9][0-9]*$' || die "execution.max_workers 在 multi-agent mode 必须是正整数"
+        fi
+        ;;
     esac
     write_field "$field" "$value"
     if [ "$field" = level ]; then
@@ -1221,7 +1363,7 @@ case "${1:-}" in
     ph="$(yget phase)"; is_empty_value "$ph" || in_list "$ph" "$VALID_PHASES" || die "phase 非法: $ph"
     lv="$(yget level)"; is_empty_value "$lv" || in_list "$lv" "$VALID_LEVELS" || die "level 非法: $lv"
     env="$(yget context.environment)"; is_empty_value "$env" || in_list "$env" "$VALID_ENVIRONMENTS" || die "context.environment 非法: $env"
-    execution_mode="$(yget execution.mode)"; is_empty_value "$execution_mode" || in_list "$execution_mode" "single goal" || die "execution.mode 非法: $execution_mode"
+    execution_mode="$(yget execution.mode)"; is_empty_value "$execution_mode" || in_list "$execution_mode" "single multi-agent goal" || die "execution.mode 非法: $execution_mode"
     execution_profile="$(yget execution.profile)"; is_empty_value "$execution_profile" || in_list "$execution_profile" "$VALID_PROFILES" || die "execution.profile 非法: $execution_profile"
     continuation="$(yget execution.continuation)"; printf '%s\n' "$continuation" | grep -qE '^[0-9]+$' || die "execution.continuation 非法: $continuation"
     for field in requirements.business requirements.fidelity requirements.external_review; do
@@ -1236,15 +1378,21 @@ case "${1:-}" in
     is_empty_value "$confirmation_status" || in_list "$confirmation_status" "$VALID_CONFIRMATION_STATUSES" || die "confirmation.status 非法: $confirmation_status"
     sp="$(yget artifacts.spec)"; is_empty_value "$sp" || [ -f "$REPO/$sp" ] || echo "⚠ spec 文件不存在: $sp" >&2
     pp="$(yget artifacts.plan)"; is_empty_value "$pp" || [ -f "$REPO/$pp" ] || echo "⚠ plan 文件不存在: $pp" >&2
+    if [ "$execution_mode" = multi-agent ]; then
+      errors=""
+      validate_execution_manifest_gate
+      [ -z "$errors" ] || die "multi-agent manifest 硬门未通过: $errors"
+    fi
     sealed_at="$(yget completion.completed_at)"
     if [ "$ph" = done ] || ! is_empty_value "$sealed_at"; then validate_completion sealed; fi
     if is_execution_phase "$ph"; then
       errors=""
       validate_understanding_gate
       validate_confirmation_gate
+      validate_execution_manifest_gate
       [ -z "$errors" ] || die "执行硬门未通过: $errors"
     fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
-  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
+  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent> [manifest]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
 esac
