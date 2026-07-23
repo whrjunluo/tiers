@@ -18,11 +18,11 @@
 
 ### Task 1: Remove the duplicate runtime
 
-**Files:** Delete `scripts/execution_manifest.py` and `tests/test_execution_manifest.py`; modify `tests/all.sh`, `scripts/platform_review_contract.py`, and `tests/test_platform_review_contract.py`.
+**Files:** Delete `scripts/execution_manifest.py` and `tests/test_execution_manifest.py`; modify `tests/all.sh` and `tests/workflow-state.sh`.
 
-- [ ] Write a failing aggregate assertion that no execution-manifest runtime exists and platform-review validation retains its independent contract.
+- [ ] Write a failing aggregate assertion that no execution-manifest runtime exists.
 - [ ] Run `bash tests/all.sh`; expect the new assertion to fail.
-- [ ] Remove the validator, its unit suite, aggregate-suite registration, and only its unrelated platform-review coupling.
+- [ ] Remove the validator, its unit suite, and aggregate-suite registration; leave platform-review validation unchanged.
 - [ ] Run `bash tests/all.sh`; expect it to pass without importing execution-manifest code.
 - [ ] Commit with `refactor: remove duplicate execution runtime`.
 

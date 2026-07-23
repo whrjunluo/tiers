@@ -13,7 +13,7 @@ execution:
   profile: standard # standard | small-fix
   choice_status: undecided # undecided | selected
   plan_sha256: ""
-  max_workers: 2
+  choice_reset_reason: ""
   fallback_reason: ""
   objective_sha256: ""
   continuation: 0
@@ -41,7 +41,6 @@ requirements:
 artifacts:
   spec: ""
   plan: ""
-  execution_manifest: ""
 evidence:
   tests: ""
   business: ""

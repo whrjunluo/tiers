@@ -151,7 +151,7 @@ platform = {
     "review_profile": profile,
     "repository_fingerprint": fingerprint,
     "artifact_sha256": artifact,
-    "prompt_sha256": "b" * 64,
+    "prompt_sha256": artifact,
     "created_at": created_at,
     "finished_at": created_at,
     "duration_seconds": 2.0,
@@ -233,41 +233,6 @@ sha256_file(){
     shasum -a 256 "$1" | awk '{print $1}'
   fi
 }
-write_execution_manifest(){
-  local repo="$1" name="$2" second_write_set="$3" plan="docs/superpowers/parallel-plan.md" manifest
-  manifest="docs/superpowers/.workflow-evidence/$name"
-  mkdir -p "$repo/docs/superpowers/.workflow-evidence"
-  printf '%s\n' '# parallel plan' > "$repo/$plan"
-  setf "$repo" artifacts.plan "$plan"
-  python3 - "$repo" "$repo/$plan" "$repo/$manifest" "$second_write_set" <<'PY'
-import hashlib
-import json
-import pathlib
-import subprocess
-import sys
-
-repo, plan, manifest, second_write_set = map(pathlib.Path, sys.argv[1:])
-base = hashlib.sha256(
-    subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip().encode()
-).hexdigest()
-data = {
-    "runner": "tiers.execution-manifest/v1",
-    "mode": "multi-agent",
-    "repository": hashlib.sha256(str(repo.resolve()).encode()).hexdigest(),
-    "base": base,
-    "plan_sha": hashlib.sha256(plan.read_bytes()).hexdigest(),
-    "max_workers": 2,
-    "tasks": [
-        {"id": "controller", "status": "ready", "dependencies": [],
-         "write_set": ["scripts/workflow-state.sh"], "worktree": ".worktrees/controller"},
-        {"id": "tests", "status": "ready", "dependencies": [],
-         "write_set": [str(second_write_set)], "worktree": ".worktrees/tests"},
-    ],
-}
-manifest.write_text(json.dumps(data), encoding="utf-8")
-PY
-  printf '%s\n' "$manifest"
-}
 unfinished_repo(){
   local repo
   repo="$(new_repo "$1")"
@@ -327,9 +292,8 @@ bash "$WS" --repo "$LEGACY" init >/dev/null
 [ "$(getf "$LEGACY" execution.mode)" = single ] || fail "未完成旧任务应迁移为 single mode"
 [ "$(getf "$LEGACY" execution.choice_status)" = undecided ] || fail "migration 应补 undecided choice status"
 [ "$(getf "$LEGACY" execution.plan_sha256)" = "" ] || fail "migration 应补空 plan hash"
-[ "$(getf "$LEGACY" execution.max_workers)" = 2 ] || fail "migration 应补默认 worker limit"
 [ "$(getf "$LEGACY" execution.fallback_reason)" = "" ] || fail "migration 应补空 fallback reason"
-[ "$(getf "$LEGACY" artifacts.execution_manifest)" = "" ] || fail "migration 应补空 execution manifest"
+[ "$(getf "$LEGACY" execution.choice_reset_reason)" = "" ] || fail "migration 应补空 reset audit reason"
 [ "$(getf "$LEGACY" understanding.status)" = pending ] || fail "未完成旧任务应迁移为 pending understanding"
 [ "$(getf "$LEGACY" completion.workflow_version)" = 2 ] || fail "未完成旧任务应升级为 workflow v2"
 
@@ -368,14 +332,59 @@ f="$REPO/docs/superpowers/.workflow-state.yaml"
 [ "$(getf "$REPO" execution.choice_status)" = undecided ] || fail "新状态应默认 undecided choice status"
 [ "$(getf "$REPO" execution.profile)" = standard ] || fail "新状态应默认 standard profile"
 [ "$(getf "$REPO" execution.plan_sha256)" = "" ] || fail "新状态不应带 plan hash"
-[ "$(getf "$REPO" execution.max_workers)" = 2 ] || fail "新状态应默认两个 workers"
 [ "$(getf "$REPO" execution.fallback_reason)" = "" ] || fail "新状态不应带 fallback reason"
-[ "$(getf "$REPO" artifacts.execution_manifest)" = "" ] || fail "新状态不应带 execution manifest"
+[ "$(getf "$REPO" execution.choice_reset_reason)" = "" ] || fail "新状态不应带 reset audit reason"
 [ "$(getf "$REPO" understanding.status)" = pending ] || fail "新状态应默认 pending understanding"
 [ "$(getf "$REPO" confirmation.status)" = pending ] || fail "新状态应默认 pending confirmation"
 [ "$(getf "$REPO" completion.workflow_version)" = 2 ] || fail "新状态应使用 workflow v2"
 
 # Execution choices remain single by default, and multi-agent manifests are bound to the plan.
+NO_PLAN_SINGLE="$(new_repo no-plan-single-choice)"
+setf "$NO_PLAN_SINGLE" phase plan
+expect_fail "plan artifact 缺失不得选择初始 single" \
+  bash "$WS" --repo "$NO_PLAN_SINGLE" choose-execution single
+
+LEGACY_PLANNED="$(new_repo legacy-planned-choice)"
+setf "$LEGACY_PLANNED" task legacy-planned-choice
+setf "$LEGACY_PLANNED" level L1
+setf "$LEGACY_PLANNED" context.target scripts/workflow-state.sh
+setf "$LEGACY_PLANNED" context.sources legacy-controller-state
+legacy_evidence="$(evidence "$LEGACY_PLANNED" requirements.txt $'result: PASS\nkind: requirements\nacceptance: migrate old planned task without rewinding\nnon_goals: no worker dispatch')"
+bash "$WS" --repo "$LEGACY_PLANNED" understand "$legacy_evidence" >/dev/null
+printf '%s\n' '# legacy plan' > "$LEGACY_PLANNED/docs/superpowers/legacy-plan.md"
+setf "$LEGACY_PLANNED" artifacts.plan docs/superpowers/legacy-plan.md
+python3 - "$LEGACY_PLANNED/docs/superpowers/.workflow-state.yaml" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().replace('phase: ""', "phase: tdd"), encoding="utf-8")
+PY
+bash "$WS" --repo "$LEGACY_PLANNED" choose-execution single >/dev/null
+[ "$(getf "$LEGACY_PLANNED" execution.choice_status)" = selected ] || fail "legacy planned task 应在原 phase 完成 explicit single migration"
+[ "$(getf "$LEGACY_PLANNED" execution.choice_reset_reason)" = "legacy planned task migration: explicit single" ] || fail "legacy planned migration 应有审计记录"
+
+PLAN_GATE="$(new_repo plan-choice-gate)"
+setf "$PLAN_GATE" task plan-choice-gate
+setf "$PLAN_GATE" level L1
+setf "$PLAN_GATE" context.target scripts/workflow-state.sh
+setf "$PLAN_GATE" context.sources user-request-and-repo
+plan_gate_evidence="$(evidence "$PLAN_GATE" requirements.txt $'result: PASS\nkind: requirements\nacceptance: plan choice must precede execution\nnon_goals: no worker dispatch')"
+bash "$WS" --repo "$PLAN_GATE" understand "$plan_gate_evidence" >/dev/null
+printf '%s\n' '# required plan' > "$PLAN_GATE/docs/superpowers/plan.md"
+setf "$PLAN_GATE" artifacts.plan docs/superpowers/plan.md
+expect_fail "有 plan 且未选择 execution mode 不得进入 tdd" \
+  bash "$WS" --repo "$PLAN_GATE" set phase tdd
+
+IMPLICIT_SINGLE="$(new_repo implicit-single-legacy)"
+setf "$IMPLICIT_SINGLE" task implicit-single-legacy
+setf "$IMPLICIT_SINGLE" level L3
+setf "$IMPLICIT_SINGLE" context.target scripts/workflow-state.sh
+setf "$IMPLICIT_SINGLE" context.sources reproduced-local-bug
+implicit_evidence="$(evidence "$IMPLICIT_SINGLE" root-cause.txt $'result: PASS\nkind: root-cause\nreproduction: local deterministic regression\nroot_cause: legacy short-fix has no plan artifact')"
+bash "$WS" --repo "$IMPLICIT_SINGLE" understand "$implicit_evidence" >/dev/null
+setf "$IMPLICIT_SINGLE" phase tdd
+[ "$(getf "$IMPLICIT_SINGLE" execution.mode)" = single ] || fail "无 plan 的 L3 legacy task 应隐式 single"
+[ "$(getf "$IMPLICIT_SINGLE" execution.choice_status)" = undecided ] || fail "legacy implicit single 不应伪造 selected choice"
+
 INITIAL_SINGLE="$(new_repo initial-single-choice)"
 setf "$INITIAL_SINGLE" task initial-single-choice
 setf "$INITIAL_SINGLE" level L1
@@ -383,10 +392,13 @@ setf "$INITIAL_SINGLE" context.target scripts/workflow-state.sh
 setf "$INITIAL_SINGLE" context.sources user-request-and-repo
 initial_evidence="$(evidence "$INITIAL_SINGLE" requirements.txt $'result: PASS\nkind: requirements\nacceptance: one execution choice after plan\nnon_goals: no controller mutation')"
 bash "$WS" --repo "$INITIAL_SINGLE" understand "$initial_evidence" >/dev/null
+printf '%s\n' '# initial plan' > "$INITIAL_SINGLE/docs/superpowers/initial-plan.md"
+setf "$INITIAL_SINGLE" artifacts.plan docs/superpowers/initial-plan.md
 setf "$INITIAL_SINGLE" phase plan
 bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single >/dev/null
 [ "$(getf "$INITIAL_SINGLE" execution.mode)" = single ] || fail "plan 阶段初始 single choice 应成功"
 [ "$(getf "$INITIAL_SINGLE" execution.choice_status)" = selected ] || fail "初始 single choice 应标记 selected"
+[ "$(getf "$INITIAL_SINGLE" execution.plan_sha256)" = "$(sha256_file "$INITIAL_SINGLE/docs/superpowers/initial-plan.md")" ] || fail "初始 single choice 应绑定 plan hash"
 [ "$(getf "$INITIAL_SINGLE" execution.fallback_reason)" = "" ] || fail "初始 single choice 不应记录 fallback reason"
 expect_fail "plan 阶段不得重复选择 single" \
   bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single
@@ -395,8 +407,46 @@ expect_fail "single 不得在 plan 阶段切换为 multi-agent" \
 setf "$INITIAL_SINGLE" phase tdd
 expect_fail "tdd 阶段不得重新作出 plain single 选择" \
   bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single
+printf '%s\n' '# changed plan' >> "$INITIAL_SINGLE/docs/superpowers/initial-plan.md"
+expect_fail "selected single 的 plan 变化应阻止继续执行" bash "$WS" --repo "$INITIAL_SINGLE" check
+bash "$WS" --repo "$INITIAL_SINGLE" choose-execution reset "plan revised by host" >/dev/null
+[ "$(getf "$INITIAL_SINGLE" execution.choice_status)" = undecided ] || fail "reset 应清空 choice status"
+[ "$(getf "$INITIAL_SINGLE" execution.fallback_reason)" = "plan revised by host" ] || fail "reset 应记录审计 reason"
+bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single >/dev/null
+[ "$(getf "$INITIAL_SINGLE" execution.choice_reset_reason)" = "plan revised by host" ] || fail "重新选择后 reset audit reason 不得丢失"
+expect_fail "fallback_reason 不得通过 generic set 清空" bash "$WS" --repo "$INITIAL_SINGLE" set execution.fallback_reason ""
+setf "$INITIAL_SINGLE" context.sources revised-acceptance-scope
+bash "$WS" --repo "$INITIAL_SINGLE" understand "$initial_evidence" >/dev/null
 
+NATIVE_MULTI_AGENT="$(new_repo native-multi-agent-choice)"
+setf "$NATIVE_MULTI_AGENT" task native-multi-agent-choice
+setf "$NATIVE_MULTI_AGENT" level L1
+setf "$NATIVE_MULTI_AGENT" context.target scripts/workflow-state.sh
+setf "$NATIVE_MULTI_AGENT" context.sources host-native-dispatch
+native_evidence="$(evidence "$NATIVE_MULTI_AGENT" requirements.txt $'result: PASS\nkind: requirements\nacceptance: native multi-agent choice needs only a plan\nnon_goals: no plugin worker runtime')"
+bash "$WS" --repo "$NATIVE_MULTI_AGENT" understand "$native_evidence" >/dev/null
+printf '%s\n' '# native parallel plan' > "$NATIVE_MULTI_AGENT/docs/superpowers/parallel-plan.md"
+setf "$NATIVE_MULTI_AGENT" artifacts.plan docs/superpowers/parallel-plan.md
+setf "$NATIVE_MULTI_AGENT" phase plan
+bash "$WS" --repo "$NATIVE_MULTI_AGENT" choose-execution multi-agent >/dev/null
+[ "$(getf "$NATIVE_MULTI_AGENT" execution.mode)" = multi-agent ] || fail "原生 multi-agent 应记录选择"
+[ "$(getf "$NATIVE_MULTI_AGENT" execution.choice_status)" = selected ] || fail "原生选择应标记 selected"
+[ "$(getf "$NATIVE_MULTI_AGENT" execution.plan_sha256)" = "$(sha256_file "$NATIVE_MULTI_AGENT/docs/superpowers/parallel-plan.md")" ] || fail "原生选择应绑定 plan hash"
+setf "$NATIVE_MULTI_AGENT" phase tdd
+expect_fail "原生 multi-agent 回退必须提供 reason" bash "$WS" --repo "$NATIVE_MULTI_AGENT" choose-execution single
+bash "$WS" --repo "$NATIVE_MULTI_AGENT" choose-execution single "native runtime unavailable" >/dev/null
+[ "$(getf "$NATIVE_MULTI_AGENT" execution.mode)" = single ] || fail "原生失败应回退顺序 single"
+[ "$(getf "$NATIVE_MULTI_AGENT" execution.fallback_reason)" = "native runtime unavailable" ] || fail "回退应记录原生能力不可用原因"
+
+if false; then # retired manifest-runtime fixtures retained temporarily below during migration
 MULTI_AGENT="$(new_repo multi-agent-choice)"
+setf "$MULTI_AGENT" task multi-agent-choice
+setf "$MULTI_AGENT" level L1
+setf "$MULTI_AGENT" context.target scripts/workflow-state.sh
+setf "$MULTI_AGENT" context.sources user-request-and-repo
+multi_evidence="$(evidence "$MULTI_AGENT" requirements.txt $'result: PASS\nkind: requirements\nacceptance: mode choice must preserve scope\nnon_goals: no worker dispatch')"
+setf "$MULTI_AGENT" context.environment n/a
+bash "$WS" --repo "$MULTI_AGENT" understand "$multi_evidence" >/dev/null
 multi_manifest="$(write_execution_manifest "$MULTI_AGENT" valid-manifest.json tests/workflow-state.sh)"
 setf "$MULTI_AGENT" phase plan
 bash "$WS" --repo "$MULTI_AGENT" choose-execution multi-agent "$multi_manifest" >/dev/null
@@ -405,12 +455,85 @@ bash "$WS" --repo "$MULTI_AGENT" choose-execution multi-agent "$multi_manifest" 
 [ "$(getf "$MULTI_AGENT" artifacts.execution_manifest)" = "$multi_manifest" ] || fail "multi-agent 应记录 manifest"
 [ "$(getf "$MULTI_AGENT" execution.plan_sha256)" = "$(sha256_file "$MULTI_AGENT/docs/superpowers/parallel-plan.md")" ] || fail "multi-agent 应记录 plan hash"
 [ "$(getf "$MULTI_AGENT" execution.max_workers)" = 2 ] || fail "multi-agent 应记录 manifest worker limit"
+printf '%s\n' "$(getf "$MULTI_AGENT" execution.manifest_selection_sha256)" | grep -qE '^[0-9a-f]{64}$' || fail "multi-agent 应绑定不可变 selection contract"
+expect_fail "selected manifest 不得通过 generic set 替换" \
+  bash "$WS" --repo "$MULTI_AGENT" set artifacts.execution_manifest docs/superpowers/.workflow-evidence/replaced.json
 bash "$WS" --repo "$MULTI_AGENT" check >/dev/null || fail "有效 multi-agent manifest 应通过 check"
+bash "$WS" --repo "$MULTI_AGENT" set phase tdd >/dev/null || fail "选择 multi-agent 不应使已通过 understanding scope 失效"
 printf '%s\n' '# stale after selection' >> "$MULTI_AGENT/docs/superpowers/parallel-plan.md"
 expect_fail "check 应重新校验 multi-agent plan hash" bash "$WS" --repo "$MULTI_AGENT" check
 
+HOST_CAPACITY="$(new_repo host-capacity)"
+capacity_manifest="$(write_execution_manifest "$HOST_CAPACITY" capacity-manifest.json docs/worker-output/tests.md)"
+python3 - "$HOST_CAPACITY/$capacity_manifest" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text())
+data["max_workers"] = 3
+data["available_workers"] = 3
+path.write_text(json.dumps(data), encoding="utf-8")
+PY
+setf "$HOST_CAPACITY" phase plan
+expect_fail "caller-controlled environment 不得提高 host worker capacity" \
+  env DEV_WORKFLOW_AVAILABLE_WORKERS=3 bash "$WS" --repo "$HOST_CAPACITY" choose-execution multi-agent "$capacity_manifest"
+
+MULTI_LIFECYCLE="$(new_repo multi-agent-lifecycle)"
+setf "$MULTI_LIFECYCLE" task multi-agent-lifecycle
+setf "$MULTI_LIFECYCLE" level L1
+setf "$MULTI_LIFECYCLE" context.target scripts/execution_manifest.py
+setf "$MULTI_LIFECYCLE" context.sources user-request-and-repo
+setf "$MULTI_LIFECYCLE" context.environment n/a
+setf "$MULTI_LIFECYCLE" context.delivery local-only
+lifecycle_evidence="$(evidence "$MULTI_LIFECYCLE" requirements.txt $'result: PASS\nkind: requirements\nacceptance: worker lifecycle is host verified\nnon_goals: no automatic dispatch')"
+bash "$WS" --repo "$MULTI_LIFECYCLE" understand "$lifecycle_evidence" >/dev/null
+lifecycle_manifest="$(write_execution_manifest "$MULTI_LIFECYCLE" lifecycle-manifest.json tests/test_execution_manifest.py)"
+setf "$MULTI_LIFECYCLE" phase plan
+bash "$WS" --repo "$MULTI_LIFECYCLE" choose-execution multi-agent "$lifecycle_manifest" >/dev/null
+python3 - "$MULTI_LIFECYCLE" "$MULTI_LIFECYCLE/$lifecycle_manifest" <<'PY'
+import json, pathlib, subprocess, sys
+repo, path = map(pathlib.Path, sys.argv[1:])
+data = json.loads(path.read_text())
+data["tasks"][0].update(status="committed", worker_commit=subprocess.check_output(["git", "-C", str(repo / ".worktrees/controller"), "rev-parse", "HEAD"], text=True).strip())
+data["tasks"][1].update(status="running")
+path.write_text(json.dumps(data))
+PY
+setf "$MULTI_LIFECYCLE" phase tdd
+bash "$WS" --repo "$MULTI_LIFECYCLE" check >/dev/null || fail "lifecycle manifest 应允许 running/committed worker"
+host_test_commit="$(git -C "$MULTI_LIFECYCLE" rev-parse HEAD)"
+host_test_content=$'commit: '"$host_test_commit"$'\ncommand: bash tests/all.sh\nexit_code: 0'
+host_test_artifact="$(evidence "$MULTI_LIFECYCLE" host-tests.txt "$host_test_content")"
+python3 - "$MULTI_LIFECYCLE" "$MULTI_LIFECYCLE/$lifecycle_manifest" "$host_test_artifact" <<'PY'
+import json, pathlib, subprocess, sys
+repo, path, artifact = sys.argv[1:]
+path = pathlib.Path(path)
+data = json.loads(path.read_text())
+for task in data["tasks"]:
+    worktree = pathlib.Path(repo, task["worktree"])
+    task.update(status="completed", worker_commit=subprocess.check_output(["git", "-C", str(worktree), "rev-parse", "HEAD"], text=True).strip())
+data["host_integration"] = {
+    "verified": True,
+    "commit": subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip(),
+    "tests": ["bash tests/all.sh"],
+    "test_artifacts": [artifact],
+}
+path.write_text(json.dumps(data))
+PY
+setf "$MULTI_LIFECYCLE" phase review
+setf "$MULTI_LIFECYCLE" evidence.tests "$(evidence "$MULTI_LIFECYCLE" tests.txt $'command: bash tests/all.sh\nexit_code: 0')"
+setf "$MULTI_LIFECYCLE" evidence.residual_risks "$(evidence "$MULTI_LIFECYCLE" risks.txt 'risk: integration commit is host-owned')"
+if ! bash "$WS" --repo "$MULTI_LIFECYCLE" complete >"$ROOT/multi-agent-complete.out" 2>"$ROOT/multi-agent-complete.err"; then
+  cat "$ROOT/multi-agent-complete.out" >&2
+  cat "$ROOT/multi-agent-complete.err" >&2
+  fail "host integration verified 后 multi-agent 应完成"
+fi
+git -C "$MULTI_LIFECYCLE" commit --allow-empty -qm post-completion-host-change
+bash "$WS" --repo "$MULTI_LIFECYCLE" check >/dev/null || fail "sealed multi-agent 历史记录不得被后续 host commit 反向判失败"
+
 OVERLAPPING_MANIFEST="$(new_repo overlapping-manifest)"
-overlap_manifest="$(write_execution_manifest "$OVERLAPPING_MANIFEST" overlap-manifest.json scripts/workflow-state.sh)"
+overlap_manifest="$(write_execution_manifest "$OVERLAPPING_MANIFEST" overlap-manifest.json scripts/execution_manifest.py)"
 setf "$OVERLAPPING_MANIFEST" phase plan
 expect_fail "overlapping write sets 不得选择 multi-agent" \
   bash "$WS" --repo "$OVERLAPPING_MANIFEST" choose-execution multi-agent "$overlap_manifest"
@@ -448,10 +571,14 @@ expect_fail "multi-agent 在 tdd 阶段回退 single 必须提供 reason" \
 bash "$WS" --repo "$FALLBACK" choose-execution single "worker timed out" >/dev/null
 [ "$(getf "$FALLBACK" execution.mode)" = single ] || fail "host fallback 应恢复 single mode"
 [ "$(getf "$FALLBACK" artifacts.execution_manifest)" = "" ] || fail "host fallback 应清空 manifest"
-[ "$(getf "$FALLBACK" execution.plan_sha256)" = "" ] || fail "host fallback 应清空 plan hash"
+[ "$(getf "$FALLBACK" execution.plan_sha256)" = "$(sha256_file "$FALLBACK/docs/superpowers/parallel-plan.md")" ] || fail "host fallback 应绑定当前 plan hash"
 [ "$(getf "$FALLBACK" execution.max_workers)" = 2 ] || fail "host fallback 应重置 worker limit"
 [ "$(getf "$FALLBACK" execution.fallback_reason)" = "worker timed out" ] || fail "host fallback 应持久化 reason"
+[ "$(getf "$FALLBACK" execution.fallback_manifest)" = "$fallback_manifest" ] || fail "host fallback 应保留 manifest provenance"
+[ "$(getf "$FALLBACK" execution.fallback_manifest_sha256)" = "$(sha256_file "$FALLBACK/$fallback_manifest")" ] || fail "host fallback 应封存 manifest hash"
 [ "$(getf "$FALLBACK" execution.choice_status)" = selected ] || fail "fallback 不应重置 choice status"
+expect_fail "plan hash 不得通过 generic set 伪造" bash "$WS" --repo "$FALLBACK" set execution.plan_sha256 "$(sha256_file "$FALLBACK/docs/superpowers/parallel-plan.md")"
+fi
 
 GOAL_CHOICE="$(new_repo goal-choice)"
 setf "$GOAL_CHOICE" phase plan
@@ -554,6 +681,10 @@ reused_requirements="$(evidence "$REUSED" requirements.txt $'result: PASS\nkind:
 bash "$WS" --repo "$REUSED" understand "$reused_requirements" >/dev/null
 [ "$(getf "$REUSED" understanding.reused_kind)" = root-cause ] || fail "L3 -> L1 应记录复用 kind"
 [ "$(getf "$REUSED" understanding.reused_evidence)" = "$reused_root" ] || fail "L3 -> L1 应记录复用 evidence"
+printf '%s\n' '# reused plan' > "$REUSED/docs/superpowers/reused-plan.md"
+setf "$REUSED" artifacts.plan docs/superpowers/reused-plan.md
+setf "$REUSED" phase plan
+bash "$WS" --repo "$REUSED" choose-execution single >/dev/null
 setf "$REUSED" phase tdd
 printf '%s\n' $'result: PASS\nkind: root-cause\nreproduction: changed\nroot_cause: tampered' > "$REUSED/$reused_root"
 expect_fail "复用的 root-cause 被篡改后不得进入 review" bash "$WS" --repo "$REUSED" set phase review
@@ -1159,6 +1290,10 @@ setf "$FIDELITY" context.delivery local-only
 setf "$FIDELITY" requirements.fidelity true
 fidelity_understanding="$(evidence "$FIDELITY" understanding.txt $'result: PASS\nkind: requirements\nacceptance: match design measurements\nnon_goals: redesign')"
 bash "$WS" --repo "$FIDELITY" understand "$fidelity_understanding" >/dev/null
+printf '%s\n' '# fidelity plan' > "$FIDELITY/docs/superpowers/fidelity-plan.md"
+setf "$FIDELITY" artifacts.plan docs/superpowers/fidelity-plan.md
+setf "$FIDELITY" phase plan
+bash "$WS" --repo "$FIDELITY" choose-execution single >/dev/null
 setf "$FIDELITY" phase fidelity-verify
 setf "$FIDELITY" evidence.tests "$(evidence "$FIDELITY" tests.txt $'command: visual tests\nexit_code: 0')"
 setf "$FIDELITY" evidence.residual_risks "$(evidence "$FIDELITY" risks.txt 'risk: none')"
@@ -1214,16 +1349,16 @@ grep -q 'tiers.platform-review/v1' "$HERE/README.md" || fail "README 应说明 p
 grep -q 'external cross-review failed; platform multi-model fallback passed' "$HERE/README.md" || fail "README 应说明 fallback provenance wording"
 for DOC in "$SKILL" "$HERE/README.md"; do
   grep -q 'choose-execution' "$DOC" || fail "执行模式文档应说明 choose-execution"
-  grep -q '一次.*plan\|plan.*一次\|one-time.*plan' "$DOC" || fail "执行模式文档应说明 plan 后仅一次选择"
+  grep -q 'plan.*一次\|一次.*plan\|只进行一次' "$DOC" || fail "执行模式文档应说明 plan 后仅一次选择"
   grep -q 'multi-agent' "$DOC" || fail "执行模式文档应说明 multi-agent"
   grep -q '默认.*single\|single.*默认\|small.*single' "$DOC" || fail "执行模式文档应说明 small task 默认 single"
-  grep -q 'read-only\|只读' "$DOC" || fail "执行模式文档应说明只读共享"
-  grep -q 'worktree' "$DOC" || fail "执行模式文档应说明隔离 worktree"
-  grep -q 'write set\|写入集' "$DOC" || fail "执行模式文档应说明不重叠写入集"
-  grep -q 'host.*integrat\|host.*集成\|主控.*集成' "$DOC" || fail "执行模式文档应说明 host 集成职责"
+  grep -q '原生优先\|native' "$DOC" || fail "执行模式文档应说明原生优先"
+  grep -q 'worktree' "$DOC" || fail "执行模式文档应说明宿主隔离 worktree"
+  grep -q '插件不创建\|不创建.*manifest' "$DOC" || fail "执行模式文档应禁止插件自建运行时"
+  grep -q '集成会话\|integration session' "$DOC" || fail "执行模式文档应说明集成会话职责"
   grep -q 'conflict\|冲突' "$DOC" || fail "执行模式文档应说明冲突处理"
-  grep -q 'inline\|内联' "$DOC" || fail "执行模式文档应说明失败时内联回退"
-  grep -q 'cleanup.*integrat\|清理.*集成' "$DOC" || fail "执行模式文档应说明集成验证后清理"
+  grep -q '顺序执行\|sequential' "$DOC" || fail "执行模式文档应说明失败时顺序回退"
+  grep -q 'shared-checkout\|共享 checkout' "$DOC" || fail "执行模式文档应禁止伪称共享 checkout 为隔离写入"
 done
 grep -qxF 'docs/superpowers/.workflow-suspended/' "$HERE/.gitignore" || fail "仓库应忽略 suspended snapshots"
 echo "PASS tests/workflow-state.sh"

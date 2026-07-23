@@ -262,15 +262,15 @@ python3 <plugin-root>/scripts/external_agent.py \
 
 `--progress jsonl` 默认把 `cross_review_started`、`review_started`、`review_finished`、`policy_satisfied`、`cross_review_terminated` 和 `cross_review_finished` 实时写到 stderr；stdout 只保留最终 JSON/文本，因此可继续重定向为完成证据。进度事件不改变 quorum 或降级规则。失败、取消和用户终止也输出带 reviewer status/耗时的机器可读证据；用户要求停止时立即终止，保存 `outcome=terminated` 证据，不继续后续 review 门禁。完成门只接受 24 小时内且仍匹配当前仓库的报告。`--context git` 会发送当前 staged/unstaged diff；不要包含密钥、`.env`、完整敏感 payload 或无关私有文件。
 
-外部 standard 评审正常失败后，平台 host 才能用两个不同模型的只读子代理形成正式 fallback。两个 reviewer 必须共享同一 repository fingerprint、artifact hash 和 prompt hash，分别使用 `correctness-regression` / `security-degradation` 角色；报告引用外部失败文件及其 SHA-256，并通过 `scripts/platform_review_contract.py` 校验。`external_agent.py` 本身不会静默启动平台子代理，平台调度与裁决由 host 负责。
+外部 standard 评审正常失败后，平台 host 才能用两个不同模型的只读子代理形成正式 fallback。两个 reviewer 必须共享同一 repository fingerprint 与外部评审 prompt artifact hash（平台 `prompt_sha256` 必须等于该 artifact hash），分别使用 `correctness-regression` / `security-degradation` 角色；报告引用外部失败文件及其 SHA-256，并通过 `scripts/platform_review_contract.py` 校验。`external_agent.py` 本身不会静默启动平台子代理，平台调度与裁决由 host 负责。
 
 ### Plan 后选择执行方式
 
-在 plan 已完成、理解度通过、且尚未开始 TDD 测试时，host 只进行一次初始 `choose-execution` 选择：向用户展示 `single` 和 `multi-agent`、说明推荐及其依据，然后运行 `workflow-state.sh choose-execution <single|multi-agent> [manifest]`。初始选择只能在 plan 阶段发生；小任务默认 `single`，只要并行收益不明确、write set 不能证明互不重叠，或需要频繁协调，也应选择 `single`。
+在 plan 已完成、理解度通过、且尚未开始 TDD 测试时，host 只进行一次 `choose-execution`：向用户展示 `single` 和 `multi-agent`、说明推荐及依据，然后运行 `workflow-state.sh choose-execution <single|multi-agent>`。选择绑定当前 plan SHA-256；plan 改变时，使用 `workflow-state.sh choose-execution reset "<audit reason>"` 回到 plan 后重新选择。没有 plan 的 L2/L3 短任务和 L4 保持 `mode=single`、`choice_status=undecided` 的兼容路径。
 
-`multi-agent` 只适用于已绑定当前 plan 的 manifest，其中每个 worker 都有可验证且不重叠的 write set。plan、接口契约、只读证据和审查结论可以 read-only 共享；worker 绝不写主控 worktree 或 controller state，而是在各自隔离的 worktree 中只写自己的 write set。host 保留主控 worktree 的唯一写权，负责接收产物、集成、处理 conflict、运行验证，并确认没有 worker 直接变更主控状态。
+`multi-agent` 是 **宿主原生优先**：Codex 或 Claude Code 负责实际的子代理、模型策略、worktree 隔离、结果收集与清理；插件只记录用户选择和 plan 绑定，不创建 manifest、worktree、branch 或 worker 生命周期。集成会话负责最终 diff、冲突处理、测试、review 和完成证据。依赖强、并行收益不明确或宿主不能隔离的任务默认选择 `single`。
 
-任何 worker 失败、超时、越出 write set，或形成无法安全处理的 conflict，host 都要记录失败原因。只有已经选择 `multi-agent` 的任务，host 才能在 `phase=tdd` 例外地运行 `workflow-state.sh choose-execution single "<fallback reason>"` 切换为 inline；reason 必须非空并写入 `execution.fallback_reason`。这不是第二次初始选择，也不会把该 worker 的写权限转交给另一个 worker。cleanup only after integration verification：host 完成集成验证后才 cleanup worker worktree、临时分支和资源，确保 cleanup 不会先于集成结果。
+原生能力不可用、失败或被用户禁用时，host 仅在 `phase=tdd` 运行 `workflow-state.sh choose-execution single "<fallback reason>"`，明确回退为当前会话顺序执行。外部 CLI 委派仍需显式授权；共享 checkout 的外部委派不能描述为隔离的并行写入。
 
 ## 脚本路径
 

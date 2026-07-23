@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+
+[ ! -e "$HERE/../scripts/execution_manifest.py" ] || {
+  echo "FAIL: execution manifest runtime must not exist" >&2
+  exit 1
+}
 DEV_WORKFLOW_STATE_LOCK_ROOT="$(mktemp -d)"
 export DEV_WORKFLOW_STATE_LOCK_ROOT
 trap 'rm -rf "$DEV_WORKFLOW_STATE_LOCK_ROOT"' EXIT
@@ -11,8 +16,6 @@ for t in lib learnings workflow-state codegraph-judge external-agent doctor hook
 done
 echo "--- managed installer unit ---"
 (cd "$HERE/.." && python3 -m unittest tests.test_managed_install -v)
-echo "--- execution manifest unit ---"
-(cd "$HERE/.." && python3 -m unittest tests.test_execution_manifest -v)
 echo "--- python hook unit ---"
 python3 "$HERE/test_detect_judging_correction.py"
 echo "--- evaluation schema unit ---"
