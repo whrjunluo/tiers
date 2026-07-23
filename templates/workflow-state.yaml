@@ -11,6 +11,7 @@ context:
 execution:
   mode: single
   profile: standard # standard | small-fix
+  choice_status: undecided # undecided | selected
   plan_sha256: ""
   max_workers: 2
   fallback_reason: ""

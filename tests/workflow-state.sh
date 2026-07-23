@@ -325,6 +325,7 @@ bash "$WS" --repo "$LEGACY" init >/dev/null
 [ "$(getf "$LEGACY" requirements.business)" = false ] || fail "migration 应补 requirements"
 [ -n "$(getf "$LEGACY" context.repo)" ] || fail "migration 应补 context"
 [ "$(getf "$LEGACY" execution.mode)" = single ] || fail "未完成旧任务应迁移为 single mode"
+[ "$(getf "$LEGACY" execution.choice_status)" = undecided ] || fail "migration 应补 undecided choice status"
 [ "$(getf "$LEGACY" execution.plan_sha256)" = "" ] || fail "migration 应补空 plan hash"
 [ "$(getf "$LEGACY" execution.max_workers)" = 2 ] || fail "migration 应补默认 worker limit"
 [ "$(getf "$LEGACY" execution.fallback_reason)" = "" ] || fail "migration 应补空 fallback reason"
@@ -364,6 +365,7 @@ f="$REPO/docs/superpowers/.workflow-state.yaml"
 [ "$(getf "$REPO" context.repo)" = "$(git -C "$REPO" rev-parse --show-toplevel)" ] || fail "init 应记录 repo"
 [ "$(getf "$REPO" context.branch)" = "feat/test-state" ] || fail "init 应记录 branch"
 [ "$(getf "$REPO" execution.mode)" = single ] || fail "新状态应默认 single mode"
+[ "$(getf "$REPO" execution.choice_status)" = undecided ] || fail "新状态应默认 undecided choice status"
 [ "$(getf "$REPO" execution.profile)" = standard ] || fail "新状态应默认 standard profile"
 [ "$(getf "$REPO" execution.plan_sha256)" = "" ] || fail "新状态不应带 plan hash"
 [ "$(getf "$REPO" execution.max_workers)" = 2 ] || fail "新状态应默认两个 workers"
@@ -384,7 +386,12 @@ bash "$WS" --repo "$INITIAL_SINGLE" understand "$initial_evidence" >/dev/null
 setf "$INITIAL_SINGLE" phase plan
 bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single >/dev/null
 [ "$(getf "$INITIAL_SINGLE" execution.mode)" = single ] || fail "plan 阶段初始 single choice 应成功"
+[ "$(getf "$INITIAL_SINGLE" execution.choice_status)" = selected ] || fail "初始 single choice 应标记 selected"
 [ "$(getf "$INITIAL_SINGLE" execution.fallback_reason)" = "" ] || fail "初始 single choice 不应记录 fallback reason"
+expect_fail "plan 阶段不得重复选择 single" \
+  bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single
+expect_fail "single 不得在 plan 阶段切换为 multi-agent" \
+  bash "$WS" --repo "$INITIAL_SINGLE" choose-execution multi-agent ignored-manifest.json
 setf "$INITIAL_SINGLE" phase tdd
 expect_fail "tdd 阶段不得重新作出 plain single 选择" \
   bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single
@@ -394,6 +401,7 @@ multi_manifest="$(write_execution_manifest "$MULTI_AGENT" valid-manifest.json te
 setf "$MULTI_AGENT" phase plan
 bash "$WS" --repo "$MULTI_AGENT" choose-execution multi-agent "$multi_manifest" >/dev/null
 [ "$(getf "$MULTI_AGENT" execution.mode)" = multi-agent ] || fail "有效 manifest 应选择 multi-agent"
+[ "$(getf "$MULTI_AGENT" execution.choice_status)" = selected ] || fail "初始 multi-agent choice 应标记 selected"
 [ "$(getf "$MULTI_AGENT" artifacts.execution_manifest)" = "$multi_manifest" ] || fail "multi-agent 应记录 manifest"
 [ "$(getf "$MULTI_AGENT" execution.plan_sha256)" = "$(sha256_file "$MULTI_AGENT/docs/superpowers/parallel-plan.md")" ] || fail "multi-agent 应记录 plan hash"
 [ "$(getf "$MULTI_AGENT" execution.max_workers)" = 2 ] || fail "multi-agent 应记录 manifest worker limit"
@@ -443,6 +451,7 @@ bash "$WS" --repo "$FALLBACK" choose-execution single "worker timed out" >/dev/n
 [ "$(getf "$FALLBACK" execution.plan_sha256)" = "" ] || fail "host fallback 应清空 plan hash"
 [ "$(getf "$FALLBACK" execution.max_workers)" = 2 ] || fail "host fallback 应重置 worker limit"
 [ "$(getf "$FALLBACK" execution.fallback_reason)" = "worker timed out" ] || fail "host fallback 应持久化 reason"
+[ "$(getf "$FALLBACK" execution.choice_status)" = selected ] || fail "fallback 不应重置 choice status"
 
 GOAL_CHOICE="$(new_repo goal-choice)"
 setf "$GOAL_CHOICE" phase plan

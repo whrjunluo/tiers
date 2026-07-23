@@ -20,10 +20,11 @@ VALID_LEVELS="L0 L1 L2 L3 L4"
 VALID_BOOLEANS="true false"
 VALID_ENVIRONMENTS="real mock n/a"
 VALID_PROFILES="standard small-fix"
+VALID_CHOICE_STATUSES="undecided selected"
 VALID_UNDERSTANDING_STATUSES="pending passed blocked not-required"
 VALID_UNDERSTANDING_KINDS="architecture requirements impact root-cause"
 VALID_CONFIRMATION_STATUSES="pending passed blocked"
-VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.checkpoint execution.plan_sha256 execution.max_workers execution.fallback_reason requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan artifacts.execution_manifest evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
+VALID_FIELDS="task level phase updated next context.repo context.branch context.target context.sources context.environment context.delivery execution.profile execution.choice_status execution.checkpoint execution.plan_sha256 execution.max_workers execution.fallback_reason requirements.business requirements.fidelity requirements.external_review artifacts.spec artifacts.plan artifacts.execution_manifest evidence.tests evidence.business evidence.requests evidence.codegraph evidence.external_review evidence.fidelity evidence.residual_risks"
 SNAPSHOT_TMP_YAML=""
 SNAPSHOT_TMP_META=""
 ACTIVE_TMP=""
@@ -102,7 +103,7 @@ yget(){ yget_file "$STATE" "$1"; }
 encode_yaml_scalar(){
   local field="$1" value="$2"
   case "$field" in
-    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.continuation|execution.max_workers|understanding.status|confirmation.mode|confirmation.status)
+    level|phase|updated|requirements.*|context.environment|completion.*|execution.mode|execution.choice_status|execution.continuation|execution.max_workers|understanding.status|confirmation.mode|confirmation.status)
       printf '%s\n' "$value"
       ;;
     *)
@@ -173,6 +174,7 @@ ensure_schema(){
   append_template_section evidence
   append_template_section completion
   ensure_nested_field execution profile standard
+  ensure_nested_field execution choice_status undecided
   ensure_nested_field execution plan_sha256 '""'
   ensure_nested_field execution max_workers 2
   ensure_nested_field execution fallback_reason '""'
@@ -453,6 +455,13 @@ state_structure_valid(){
   value="$(yget_file "$file" level)"; is_empty_value "$value" || in_list "$value" "$VALID_LEVELS" || return 1
   value="$(yget_file "$file" context.environment)"; is_empty_value "$value" || in_list "$value" "$VALID_ENVIRONMENTS" || return 1
   value="$(yget_file "$file" execution.mode)"; is_empty_value "$value" || in_list "$value" "single multi-agent goal" || return 1
+  value="$(yget_file "$file" execution.choice_status)"; is_empty_value "$value" || in_list "$value" "$VALID_CHOICE_STATUSES" || return 1
+  if [ "$(yget_file "$file" execution.mode)" != goal ]; then
+    case "$(yget_file "$file" execution.choice_status):$(yget_file "$file" execution.mode)" in
+      undecided:single|selected:single|selected:multi-agent) ;;
+      *) return 1 ;;
+    esac
+  fi
   value="$(yget_file "$file" execution.profile)"; is_empty_value "$value" || in_list "$value" "$VALID_PROFILES" || return 1
   value="$(yget_file "$file" execution.continuation)"; printf '%s\n' "$value" | grep -qE '^[0-9]+$' || return 1
   if [ "$(yget_file "$file" execution.mode)" = multi-agent ]; then
@@ -474,6 +483,7 @@ state_is_empty_slot(){
   state_structure_valid "$file" || return 1
   [ "$(yget_file "$file" context.repo)" = "$(canonical_repo_root)" ] || return 1
   [ "$(yget_file "$file" execution.mode)" = single ] || return 1
+  [ "$(yget_file "$file" execution.choice_status)" = undecided ] || return 1
   [ "$(yget_file "$file" execution.profile)" = standard ] || return 1
   [ "$(yget_file "$file" execution.max_workers)" = 2 ] || return 1
   [ "$(yget_file "$file" execution.continuation)" = 0 ] || return 1
@@ -1198,13 +1208,16 @@ case "${1:-}" in
           reset_execution_choice "$fallback_reason"
           echo "✓ execution mode = single（fallback=${fallback_reason}）"
         else
+          [ "$(yget execution.choice_status)" = undecided ] || die "execution choice 已完成；plan 阶段不得重复选择"
           [ "$#" -eq 2 ] || die "初始 single choice 不接受 reason 或 manifest 参数"
           [ "$phase" = plan ] || die "初始 single choice 只能在 phase=plan 时执行，当前为 ${phase:-空}"
           reset_execution_choice
+          write_field execution.choice_status selected
           echo "✓ execution mode = single"
         fi ;;
       multi-agent)
         [ "$#" -eq 3 ] || die "用法: workflow-state.sh [--repo R] choose-execution multi-agent <manifest>"
+        [ "$(yget execution.choice_status)" = undecided ] || die "execution choice 已完成；不得切换为 multi-agent"
         [ "$phase" = plan ] || die "multi-agent 只能在 phase=plan 时选择，当前为 ${phase:-空}"
         errors=""
         manifest_value="$3"
@@ -1216,6 +1229,7 @@ case "${1:-}" in
         write_field execution.plan_sha256 "$(file_sha256 "$plan_path")"
         write_field execution.max_workers "$manifest_workers"
         write_field execution.fallback_reason ""
+        write_field execution.choice_status selected
         echo "✓ execution mode = multi-agent（workers=${manifest_workers}）" ;;
       *) die "非法 execution mode ${choice}（允许: single multi-agent）" ;;
     esac
@@ -1333,6 +1347,7 @@ case "${1:-}" in
       requirements.*) in_list "$value" "$VALID_BOOLEANS" || die "$field 只能是 true/false" ;;
       context.environment) in_list "$value" "$VALID_ENVIRONMENTS" || die "$field 只能是 real/mock/n/a" ;;
       execution.profile) in_list "$value" "$VALID_PROFILES" || die "$field 只能是 standard/small-fix" ;;
+      execution.choice_status) die "execution.choice_status 只能由 choose-execution 更新" ;;
       execution.plan_sha256)
         if [ "$(yget execution.mode)" = multi-agent ]; then
           printf '%s\n' "$value" | grep -qE '^[0-9a-f]{64}$' || die "execution.plan_sha256 在 multi-agent mode 必须是 64 位小写 hex"
