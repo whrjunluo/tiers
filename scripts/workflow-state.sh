@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 续行状态独占接口（学 Comet comet-state.sh）。SKILL.md 只调本脚本，禁手改 YAML。
-# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent> [manifest]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
+# 用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent> [manifest|reason]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}
 set -euo pipefail
 # 复用 lib.sh 的 dw_plugin_root（单一来源），避免与各脚本重复维护 env 优先级链
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -326,11 +326,12 @@ repository_sha256(){ text_sha256 "$(canonical_repo_root)"; }
 base_revision_sha256(){ text_sha256 "$(yget execution.base_revision)"; }
 
 reset_execution_choice(){
+  local fallback_reason="${1:-}"
   write_field execution.mode single
   write_field artifacts.execution_manifest ""
   write_field execution.plan_sha256 ""
   write_field execution.max_workers 2
-  write_field execution.fallback_reason ""
+  write_field execution.fallback_reason "$fallback_reason"
 }
 
 manifest_workers=""
@@ -381,7 +382,7 @@ PY
 
 validate_execution_manifest_gate(){
   local manifest_value plan_value plan_sha workers
-  [ "$(yget execution.mode)" = multi-agent ] || return
+  [ "$(yget execution.mode)" = multi-agent ] || return 0
   manifest_value="$(yget artifacts.execution_manifest)"
   plan_value="$(yget artifacts.plan)"
   validate_execution_manifest_file "$manifest_value" "$plan_value"
@@ -1181,7 +1182,7 @@ case "${1:-}" in
     echo "✓ 目标续行 = 第 $(yget execution.continuation) 次｜phase = $(yget phase)｜理解度 = $reuse" ;;
   choose-execution)
     [ -f "$STATE" ] || die "状态文件不存在，先 init"
-    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] choose-execution <single|multi-agent> [manifest]"
+    [ "$#" -ge 2 ] || die "用法: workflow-state.sh [--repo R] choose-execution <single|multi-agent> [manifest|reason]"
     sealed_at="$(yget completion.completed_at)"
     is_empty_value "$sealed_at" || die "任务已封存；不得选择 execution mode"
     [ "$(yget execution.mode)" != goal ] || die "Goal mode 不支持 choose-execution"
@@ -1189,10 +1190,19 @@ case "${1:-}" in
     phase="$(yget phase)"
     case "$choice" in
       single)
-        [ "$#" -eq 2 ] || die "single 不接受 manifest 参数"
-        in_list "$phase" "plan tdd" || die "single 只能在 phase=plan 或 tdd 时选择，当前为 ${phase:-空}"
-        reset_execution_choice
-        echo "✓ execution mode = single" ;;
+        if [ "$(yget execution.mode)" = multi-agent ]; then
+          [ "$phase" = tdd ] || die "multi-agent 回退 single 只能在 phase=tdd 时执行，当前为 ${phase:-空}"
+          [ "$#" -eq 3 ] || die "multi-agent 回退 single 必须提供非空 fallback reason"
+          fallback_reason="$3"
+          printf '%s' "$fallback_reason" | grep -q '[^[:space:]]' || die "multi-agent 回退 single 必须提供非空 fallback reason"
+          reset_execution_choice "$fallback_reason"
+          echo "✓ execution mode = single（fallback=${fallback_reason}）"
+        else
+          [ "$#" -eq 2 ] || die "初始 single choice 不接受 reason 或 manifest 参数"
+          [ "$phase" = plan ] || die "初始 single choice 只能在 phase=plan 时执行，当前为 ${phase:-空}"
+          reset_execution_choice
+          echo "✓ execution mode = single"
+        fi ;;
       multi-agent)
         [ "$#" -eq 3 ] || die "用法: workflow-state.sh [--repo R] choose-execution multi-agent <manifest>"
         [ "$phase" = plan ] || die "multi-agent 只能在 phase=plan 时选择，当前为 ${phase:-空}"
@@ -1394,5 +1404,5 @@ case "${1:-}" in
     fi
     is_empty_value "$ph" && ph=""
     echo "✓ check 通过（phase=${ph:-空}）" ;;
-  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent> [manifest]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
+  *) echo "用法: workflow-state.sh [--repo R] {init|start <task> <level>|suspend <key>|resume <key>|goal <objective>|continue-goal <objective>|choose-execution <single|multi-agent> [manifest|reason]|understand <evidence>|confirm <json>|get <field>|set <field> <value>|check|complete}" >&2; exit 2 ;;
 esac

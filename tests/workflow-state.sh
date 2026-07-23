@@ -374,6 +374,21 @@ f="$REPO/docs/superpowers/.workflow-state.yaml"
 [ "$(getf "$REPO" completion.workflow_version)" = 2 ] || fail "新状态应使用 workflow v2"
 
 # Execution choices remain single by default, and multi-agent manifests are bound to the plan.
+INITIAL_SINGLE="$(new_repo initial-single-choice)"
+setf "$INITIAL_SINGLE" task initial-single-choice
+setf "$INITIAL_SINGLE" level L1
+setf "$INITIAL_SINGLE" context.target scripts/workflow-state.sh
+setf "$INITIAL_SINGLE" context.sources user-request-and-repo
+initial_evidence="$(evidence "$INITIAL_SINGLE" requirements.txt $'result: PASS\nkind: requirements\nacceptance: one execution choice after plan\nnon_goals: no controller mutation')"
+bash "$WS" --repo "$INITIAL_SINGLE" understand "$initial_evidence" >/dev/null
+setf "$INITIAL_SINGLE" phase plan
+bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single >/dev/null
+[ "$(getf "$INITIAL_SINGLE" execution.mode)" = single ] || fail "plan 阶段初始 single choice 应成功"
+[ "$(getf "$INITIAL_SINGLE" execution.fallback_reason)" = "" ] || fail "初始 single choice 不应记录 fallback reason"
+setf "$INITIAL_SINGLE" phase tdd
+expect_fail "tdd 阶段不得重新作出 plain single 选择" \
+  bash "$WS" --repo "$INITIAL_SINGLE" choose-execution single
+
 MULTI_AGENT="$(new_repo multi-agent-choice)"
 multi_manifest="$(write_execution_manifest "$MULTI_AGENT" valid-manifest.json tests/workflow-state.sh)"
 setf "$MULTI_AGENT" phase plan
@@ -408,11 +423,26 @@ expect_fail "stale plan hash 不得选择 multi-agent" \
   bash "$WS" --repo "$STALE_PLAN" choose-execution multi-agent "$stale_manifest"
 [ "$(getf "$STALE_PLAN" execution.mode)" = single ] || fail "stale plan manifest 不得改变 mode"
 
-bash "$WS" --repo "$MULTI_AGENT" choose-execution single >/dev/null
-[ "$(getf "$MULTI_AGENT" execution.mode)" = single ] || fail "single choice 应恢复 single mode"
-[ "$(getf "$MULTI_AGENT" artifacts.execution_manifest)" = "" ] || fail "single choice 应清空 manifest"
-[ "$(getf "$MULTI_AGENT" execution.plan_sha256)" = "" ] || fail "single choice 应清空 plan hash"
-[ "$(getf "$MULTI_AGENT" execution.max_workers)" = 2 ] || fail "single choice 应重置 worker limit"
+FALLBACK="$(new_repo multi-agent-fallback)"
+setf "$FALLBACK" task multi-agent-fallback
+setf "$FALLBACK" level L1
+setf "$FALLBACK" context.target scripts/workflow-state.sh
+setf "$FALLBACK" context.sources user-request-and-repo
+fallback_evidence="$(evidence "$FALLBACK" requirements.txt $'result: PASS\nkind: requirements\nacceptance: host records a fallback reason\nnon_goals: no controller mutation')"
+bash "$WS" --repo "$FALLBACK" understand "$fallback_evidence" >/dev/null
+fallback_manifest="$(write_execution_manifest "$FALLBACK" fallback-manifest.json tests/workflow-state.sh)"
+setf "$FALLBACK" phase plan
+bash "$WS" --repo "$FALLBACK" choose-execution multi-agent "$fallback_manifest" >/dev/null
+bash "$WS" --repo "$FALLBACK" understand "$fallback_evidence" >/dev/null
+setf "$FALLBACK" phase tdd
+expect_fail "multi-agent 在 tdd 阶段回退 single 必须提供 reason" \
+  bash "$WS" --repo "$FALLBACK" choose-execution single
+bash "$WS" --repo "$FALLBACK" choose-execution single "worker timed out" >/dev/null
+[ "$(getf "$FALLBACK" execution.mode)" = single ] || fail "host fallback 应恢复 single mode"
+[ "$(getf "$FALLBACK" artifacts.execution_manifest)" = "" ] || fail "host fallback 应清空 manifest"
+[ "$(getf "$FALLBACK" execution.plan_sha256)" = "" ] || fail "host fallback 应清空 plan hash"
+[ "$(getf "$FALLBACK" execution.max_workers)" = 2 ] || fail "host fallback 应重置 worker limit"
+[ "$(getf "$FALLBACK" execution.fallback_reason)" = "worker timed out" ] || fail "host fallback 应持久化 reason"
 
 GOAL_CHOICE="$(new_repo goal-choice)"
 setf "$GOAL_CHOICE" phase plan
