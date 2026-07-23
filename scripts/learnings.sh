@@ -5,6 +5,7 @@
 #   learnings.sh count                       # 按 category 统计 pending 计数（降序）
 #   learnings.sh categories                  # 列出词表里的有效 category
 #   learnings.sh add <category> <project> <note>   # 校验 category 后原子追加一条 pending
+#   learnings.sh fold <category>              # 将该 category 的 pending 记录原子标记为 folded
 #   learnings.sh list                        # 打印「进化记录」整段
 #   learnings.sh ready                        # 仅列出已达阈值(≥2)、应提固化提案的 category
 set -euo pipefail
@@ -32,6 +33,39 @@ count() {
                if(st=="pending" && cat!="") c[cat]++ }
     END{ for(k in c) printf "%d\t%s\n", c[k], k }
   ' "$LEARNINGS" | sort -rn
+}
+
+fold_category() {
+  local target="$1" tmp count_file changed
+  if ! valid_cats | grep -qxF "$target"; then
+    echo "✗ category「$target」不在词表中。有效值：" >&2
+    valid_cats | sed 's/^/  - /' >&2
+    return 1
+  fi
+  tmp="${LEARNINGS}.tmp.$$"
+  count_file="${LEARNINGS}.fold-count.$$"
+  if ! awk -v target="$target" -v count_file="$count_file" '
+    /^[[:space:]]*-[[:space:]]+date:/ { category="" }
+    /category:/ {
+      category=$0
+      sub(/.*category:[[:space:]]*/, "", category)
+      sub(/[[:space:]]*#.*/, "", category)
+      gsub(/[[:space:]]+$/, "", category)
+    }
+    /status:[[:space:]]*pending/ && category==target {
+      sub(/status:[[:space:]]*pending/, "status: folded")
+      changed++
+    }
+    { print }
+    END { print changed+0 > count_file }
+  ' "$LEARNINGS" > "$tmp"; then
+    rm -f "$tmp" "$count_file"
+    return 1
+  fi
+  changed="$(cat "$count_file")"
+  mv "$tmp" "$LEARNINGS"
+  rm -f "$count_file"
+  echo "✓ 已 folded：${target}（$changed 条）"
 }
 
 cmd="${1:-}"
@@ -67,6 +101,13 @@ case "$cmd" in
       echo "  ⚠ 已达阈值 ≥2 → 下次开工应对该 category 提固化提案"
     fi
     ;;
+  fold)
+    cat="${2:-}"
+    if [ -z "$cat" ]; then
+      echo "用法: learnings.sh fold <category>" >&2; exit 2
+    fi
+    fold_category "$cat"
+    ;;
   *)
-    echo "用法: learnings.sh {count|categories|ready|add|list}" >&2; exit 2 ;;
+    echo "用法: learnings.sh {count|categories|ready|add|fold|list}" >&2; exit 2 ;;
 esac
